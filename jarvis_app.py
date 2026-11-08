@@ -39,26 +39,30 @@ def server_up():
     return _get("/api/ping", 0.8)[0] == 200
 
 
+STATE = {"window": None, "maxed": False, "no_tray": False}
+
+
 class Api:
-    """Called from the page's own window buttons (minimise, maximise, close)."""
-    def __init__(self):
-        self.window = None
-        self.maxed = False
-        self.no_tray = False
+    """Called from the page's own window buttons (minimise, maximise, close).
+
+    Holds no attributes on purpose: pywebview walks every public attribute of this object to expose it to the
+    page, and walking into the window object loops forever (the window then stops responding)."""
 
     def minimize(self):
-        self.window.minimize()
+        STATE["window"].minimize()
 
     def toggle_maximize(self):
-        if self.maxed:
-            self.window.restore()
+        w = STATE["window"]
+        if STATE["maxed"]:
+            w.restore()
         else:
-            self.window.maximize()
-        self.maxed = not self.maxed
-        return self.maxed
+            w.maximize()
+        STATE["maxed"] = not STATE["maxed"]
+        return STATE["maxed"]
 
     def close(self):
-        self.window.destroy() if self.no_tray else self.window.hide()   # normally stays in the tray
+        w = STATE["window"]
+        w.destroy() if STATE["no_tray"] else w.hide()      # normally stays in the tray
 
     def is_app(self):
         return True
@@ -110,7 +114,7 @@ def main():
     window = webview.create_window(
         "Jarvis", URL, js_api=api, width=1500, height=920, min_size=(960, 640), frameless=True, easy_drag=False,
         hidden=background, background_color="#F4F3F0", text_select=True)
-    api.window = window
+    STATE["window"] = window
     quitting = {"now": False}
 
     def on_closing():
@@ -119,8 +123,8 @@ def main():
         window.hide()                          # keep running in the tray
         return False
     window.events.closing += on_closing
-    window.events.maximized += lambda: setattr(api, "maxed", True)
-    window.events.restored += lambda: setattr(api, "maxed", False)
+    window.events.maximized += lambda: STATE.update(maxed=True)
+    window.events.restored += lambda: STATE.update(maxed=False)
 
     def show():
         window.show()
@@ -150,7 +154,7 @@ def main():
         tray.run_detached()
     except Exception as e:
         tray = None
-        api.no_tray = True
+        STATE["no_tray"] = True
         S.log_error(f"Tray icon unavailable: {e}")
 
     storage = S.DATA / "webview"
