@@ -199,6 +199,19 @@ async function checkUpdate() {
     bar.hidden = false;
   }
 }
+// Settings > Help > Check for updates
+export function initUpdateCheck() {
+  const b = $("#updCheck"); if (!b) return;
+  b.onclick = async () => {
+    const out = $("#updOut"); b.disabled = true; out.className = "test-out"; out.textContent = "Checking…";
+    try {
+      const r = await api("/api/update/check", {});
+      out.className = "test-out ok"; out.textContent = r.message || "";
+      if (r.ready) checkUpdate();
+    } catch (e) { out.className = "test-out bad"; out.textContent = e.message; }
+    finally { b.disabled = false; }
+  };
+}
 async function installUpdate() {
   const btn = $("#updateBtn");
   btn.disabled = true; btn.innerHTML = '<span class="spinner" aria-hidden="true"></span>';

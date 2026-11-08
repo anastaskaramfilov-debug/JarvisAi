@@ -4475,10 +4475,25 @@ def check_app_update() -> dict:
 
 
 def update_watcher():
-    time.sleep(60)
+    time.sleep(20)
     while True:
         check_app_update()
-        time.sleep(6 * 3600)
+        time.sleep(3600)                                # every hour
+
+
+@app.post("/api/update/check")
+def api_update_check():
+    """The Check for updates button: looks right now and says what it found."""
+    if _is_remote():
+        return jsonify({"error": "PC only"}), 403
+    if not FROZEN:
+        return jsonify({"message": "This Jarvis runs from source; updates come from the launcher script."})
+    check_app_update()
+    if UPDATE.get("file"):
+        return jsonify({"ready": UPDATE["latest"], "message": f"Jarvis {UPDATE['latest']} is ready. Click Update now."})
+    if UPDATE.get("error"):
+        return jsonify({"error": f"Couldn't check: {UPDATE['error']}"}), 400
+    return jsonify({"message": f"You have the newest version ({APP_VERSION})."})
 
 
 @app.get("/api/version")

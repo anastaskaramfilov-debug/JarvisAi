@@ -9,7 +9,7 @@ import { initTheme, syncThemeFromConfig } from "./theme.js";
 import { toggleMini, miniSupported } from "./mini.js";
 import { IS_REMOTE } from "./voice.js";
 import { initAlive } from "./alive.js";
-import { initWidgets } from "./widgets.js";
+import { initWidgets, initUpdateCheck } from "./widgets.js";
 import { initFun } from "./fun.js";
 import { initNative } from "./native.js";
 
@@ -57,6 +57,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initAlive();
   initContext();
   initWidgets();
+  initUpdateCheck();
   initAssistant();
   initViews();
   initSettings();

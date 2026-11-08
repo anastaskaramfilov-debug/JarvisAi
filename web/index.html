@@ -650,9 +650,9 @@
           <div class="settings-page" id="set-about" role="tabpanel">
             <h2>Help</h2><p class="lead">Your personal assistant, running on this PC.</p>
             <dl class="about-list">
-              <dt>Version</dt><dd id="aboutVersion" class="num">…</dd>
+              <dt>Version</dt><dd><span id="aboutVersion" class="num">…</span> <button class="btn sm pc-only" id="updCheck" type="button" style="margin-left:10px"><i data-icon="refresh"></i><span>Check for updates</span></button> <span class="test-out" id="updOut" role="status"></span></dd>
               <dt>Local address</dt><dd id="aboutAddress" class="mono"></dd>
-              <dt>Your data</dt><dd>Settings, tasks, memory and conversation are saved in the Jarvis folder on this PC.</dd>
+              <dt>Your data</dt><dd>Settings, tasks, memory and conversation are saved on this PC (%APPDATA%\Jarvis for the installed app). Keys are encrypted.</dd>
               <dt>Error log</dt><dd class="mono">jarvis_log.txt</dd>
               <dt>Speech</dt><dd>Recognition runs locally (faster-whisper). Natural voices use Microsoft Edge's online voice service.</dd>
             </dl>
