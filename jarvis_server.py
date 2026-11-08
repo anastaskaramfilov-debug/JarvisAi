@@ -1379,9 +1379,30 @@ def _powershell(cmd: str) -> str:
     return out.strip()[:4000] or "(no output)"
 
 
+SAFE_PS_START = re.compile(r"^(get|measure|select|where|sort|format|group|compare|convertto)-[a-z]+$|^out-string$", re.I)
+SAFE_EXE = {"ipconfig", "systeminfo", "whoami", "hostname", "tasklist", "driverquery", "nvidia-smi"}
+PS_NEVER_DIRECT = re.compile(r"[`$@{}\[\]<>()'\"]|\\\\|https?:|ftp:|-enc|invoke|iex|start-|downloadstring|webclient|"
+                             r"net\.|test-net|test-connection|resolve-dns|get-credential|out-file|export-|set-|new-|"
+                             r"remove-|\.(exe|ps1|bat|cmd|vbs|js)\b|::", re.I)
+
+
+def _ps_read_only(cmd: str) -> bool:
+    """Strict check: only simple, chained read-only cmdlets with plain arguments run without Confirm."""
+    if len(cmd) > 300 or PS_NEVER_DIRECT.search(cmd):
+        return False
+    for seg in re.split(r"[|;&]", cmd):
+        words = seg.strip().split()
+        if not words:
+            return False
+        first = words[0].lower()
+        if not (SAFE_PS_START.match(first) or first in SAFE_EXE):
+            return False
+    return True
+
+
 def run_command(command: str) -> dict:
-    """Run a PowerShell command. Read-only commands (Get-..., Test-...) run straight away; anything else needs Confirm."""
-    if READ_ONLY_PS.match(command) and not RISKY_PS.search(command):
+    """Run a PowerShell command. Simple read-only commands (Get-...) run straight away; anything else needs Confirm."""
+    if _ps_read_only(command):
         try:
             return {"output": _powershell(command)}
         except subprocess.TimeoutExpired:
@@ -1466,6 +1487,17 @@ def execute_pending(item: dict) -> str:
             (" to Trash." if d["action"] == "trash" else " as spam.")
     if kind == "connector":
         return JC.run_confirmed(d)
+    if kind == "tool":                                         # an action held back by the outside-content guard
+        CURRENT_REQUEST["confirmed"] = True
+        try:
+            res = run_tool(d["name"], d.get("args") or {})
+        finally:
+            CURRENT_REQUEST["confirmed"] = False
+        if isinstance(res, dict) and res.get("error"):
+            raise RuntimeError(res["error"])
+        if isinstance(res, dict) and res.get("status") == "waiting_for_user_confirmation":
+            return "One more confirmation is waiting in the chat."
+        return "Done."
     if kind == "block":
         return _do_block(d["sender"])
     if kind == "unsubscribe":
@@ -3136,6 +3168,43 @@ TOOL_PROPS = {name: props for name, _, _, props, _ in TOOLS}
 CURRENT_REQUEST = {"text": ""}
 
 
+# ---------- protection against instructions hidden in web pages, emails, files and apps ----------
+# Once a request has read outside content, actions that send data out, change files, run commands or change
+# Jarvis's memory need the user's Confirm, so a booby-trapped page can't make Jarvis act on its own.
+UNTRUSTED_READERS = {"web_search", "read_webpage", "check_email", "search_email", "read_file", "list_folder",
+                     "find_files", "calendar_events", "show_images", "inbox_top_senders", "look_at_screen",
+                     "gcal_events", "gdrive_search", "gdrive_read", "discord_read", "discord_channels"}
+GUARDED_AFTER_UNTRUSTED = {"run_command", "open_website", "open_path", "type_text", "press_keys", "write_file",
+                           "move_file", "copy_file", "make_folder", "zip_files", "unzip_file", "viber_message",
+                           "remember", "forget", "save_skill", "create_reminder", "manage_email", "gcal_add",
+                           "save_contact", "send_email", "reply_email", "add_calendar_event"}
+TOOL_LABELS = {"open_website": "Open a website", "open_path": "Open a file or folder", "type_text": "Type text",
+               "press_keys": "Press keys", "write_file": "Write a file", "move_file": "Move a file",
+               "copy_file": "Copy a file", "make_folder": "Make a folder", "zip_files": "Zip files",
+               "unzip_file": "Unzip a file", "viber_message": "Write a Viber message", "remember": "Remember this",
+               "forget": "Forget this", "save_skill": "Save a skill", "create_reminder": "Set a reminder",
+               "manage_email": "Change emails", "gcal_add": "Add a calendar event", "save_contact": "Save a contact",
+               "add_calendar_event": "Add a calendar event"}
+
+
+def _is_untrusted_reader(name: str) -> bool:
+    return name in UNTRUSTED_READERS or "__" in name          # "app__tool" = a connected MCP app
+
+
+def _injection_guard(name: str, args: dict):
+    """None if the tool may run now; otherwise a Confirm request."""
+    src = CURRENT_REQUEST.get("tainted")
+    if not src or name not in GUARDED_AFTER_UNTRUSTED or CURRENT_REQUEST.get("confirmed"):
+        return None
+    if name == "run_command":                                  # always its own Confirm card after outside content
+        cmd = str(args.get("command", ""))
+        return _ask_confirm("command", "Run a PowerShell command", cmd, "Run", command=cmd)
+    detail = "\n".join(f"{k}: {str(v)[:400]}" for k, v in args.items() if v not in (None, ""))
+    return _ask_confirm("tool", f"{TOOL_LABELS.get(name, name)}?",
+                        f"Jarvis read {src} for this request, so he asks before acting. Check it's what you "
+                        f"wanted:\n\n{detail}", "Allow", name=name, args=args)
+
+
 def run_tool(name: str, args: dict) -> dict:
     if name in ALWAYS_GATED and CURRENT_REQUEST["text"] is not None and \
             not re.search(TOOL_KEYWORDS[name], CURRENT_REQUEST["text"], re.I):
@@ -3155,10 +3224,17 @@ def run_tool(name: str, args: dict) -> dict:
         if v in (None, "", "none", "null") and k != "repeat":
             continue
         clean[k] = v
+    held = _injection_guard(name, clean)
+    if held:
+        return held
     try:
         res = fn(**clean)
     except Exception as e:
         res = {"error": f"{type(e).__name__}: {e}"}
+    if _is_untrusted_reader(name) and not CURRENT_REQUEST.get("tainted"):
+        CURRENT_REQUEST["tainted"] = {"read_webpage": "a web page", "web_search": "web search results",
+                                      "check_email": "your emails", "search_email": "your emails",
+                                      "read_file": "a file", "look_at_screen": "your screen"}.get(name, "outside content")
     if isinstance(res, dict) and (res.get("error") or (name.startswith("spotify") and res.get("note"))):
         log_error(f"Tool {name}{json.dumps(clean, ensure_ascii=False)[:160]} -> {json.dumps(res, ensure_ascii=False)[:300]}")
     return res
@@ -3826,6 +3902,7 @@ def _chat(user_text: str, emit, voice: bool, keep: bool) -> dict:
     t0 = time.time()
     TIMING.clear()
     CURRENT_REQUEST["text"] = user_text
+    CURRENT_REQUEST["tainted"] = ""            # set once this request has read outside content
     log, note = [], None
     speaker = Speaker(emit, voice) if emit else None
     on_text = speaker.feed if speaker else None
@@ -4305,39 +4382,70 @@ def _vtuple(v: str) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", v or "")[:3]) or (0,)
 
 
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def check_app_update() -> dict:
-    """Looks for a newer release on GitHub and downloads its installer in the background."""
+    """Looks for a newer release on GitHub and downloads its installer, checking where it came from.
+
+    Only accepted when: the release and the file were published by GitHub's own build bot (not uploaded by hand),
+    the file comes from this app's repository, and its SHA-256 matches the checksum file the build published."""
     if not (FROZEN and GITHUB_REPO):
         return UPDATE
     try:
-        r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=15,
-                         headers={"Accept": "application/vnd.github+json", "User-Agent": "Jarvis"})
+        hdr = {"Accept": "application/vnd.github+json", "User-Agent": "Jarvis"}
+        r = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest", timeout=15, headers=hdr)
         if r.status_code == 404:
             return UPDATE
         j = r.json()
         tag = (j.get("tag_name") or "").lstrip("vV")
-        if not tag or _vtuple(tag) <= _vtuple(APP_VERSION):
+        if not tag or _vtuple(tag) <= _vtuple(APP_VERSION) or j.get("draft") or j.get("prerelease"):
             return UPDATE
-        asset = next((a for a in j.get("assets", []) if a["name"].lower().endswith(".exe")), None)
-        if not asset:
-            return UPDATE
-        dest = Path(tempfile.gettempdir()) / asset["name"]
-        if not (dest.exists() and dest.stat().st_size == asset.get("size")):
+        bot = "github-actions[bot]"
+        if (j.get("author") or {}).get("login") != bot:
+            raise RuntimeError("release wasn't made by the GitHub build, ignored")
+        assets = {a["name"]: a for a in j.get("assets", [])}
+        exe = next((a for n, a in assets.items() if re.fullmatch(r"Jarvis-Setup-[\d.]+\.exe", n)), None)
+        sums = assets.get("SHA256SUMS.txt")
+        prefix = f"https://github.com/{GITHUB_REPO}/releases/download/"
+        if not exe or not sums:
+            raise RuntimeError("release is missing the installer or its checksum")
+        for a in (exe, sums):
+            if (a.get("uploader") or {}).get("login") != bot or not a["browser_download_url"].startswith(prefix):
+                raise RuntimeError("release file wasn't uploaded by the GitHub build, ignored")
+        sums_text = requests.get(sums["browser_download_url"], timeout=20, headers={"User-Agent": "Jarvis"}).text
+        want = next((ln.split()[0].lower() for ln in sums_text.splitlines()
+                     if ln.strip().endswith(exe["name"]) and re.match(r"^[0-9a-fA-F]{64}\s", ln)), None)
+        if not want:
+            raise RuntimeError("checksum for the installer not found")
+        folder = DATA / "updates"                       # your own folder (not the shared temp folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        dest = folder / exe["name"]
+        if not (dest.exists() and _sha256(dest) == want):
             part = dest.with_suffix(".part")
-            with requests.get(asset["browser_download_url"], stream=True, timeout=60,
+            with requests.get(exe["browser_download_url"], stream=True, timeout=60,
                               headers={"User-Agent": "Jarvis"}) as d:
                 d.raise_for_status()
                 with open(part, "wb") as f:
                     for chunk in d.iter_content(1 << 20):
                         f.write(chunk)
-            if part.stat().st_size != asset.get("size"):
+            if _sha256(part) != want:
                 part.unlink(missing_ok=True)
-                raise RuntimeError("download incomplete")
+                raise RuntimeError("downloaded installer doesn't match its checksum, deleted")
             os.replace(part, dest)
-        UPDATE.update(latest=tag, file=str(dest), error=None)
-        log_error(f"Update {tag} downloaded and ready")
+        for old in folder.glob("Jarvis-Setup-*.exe"):    # keep only the newest
+            if old != dest:
+                old.unlink(missing_ok=True)
+        UPDATE.update(latest=tag, file=str(dest), sha256=want, error=None)
+        log_error(f"Update {tag} downloaded and verified")
     except Exception as e:
         UPDATE["error"] = str(e)
+        log_error(f"Update check: {e}")
     return UPDATE
 
 
@@ -4377,6 +4485,9 @@ def api_update_install():
         return jsonify({"error": "Update Jarvis on the PC"}), 403
     if not UPDATE["file"] or not Path(UPDATE["file"]).exists():
         return jsonify({"error": "No update is ready"}), 400
+    if _sha256(Path(UPDATE["file"])) != UPDATE.get("sha256"):      # checked again right before running it
+        UPDATE.update(latest=None, file=None)
+        return jsonify({"error": "The downloaded update changed on disk, so it wasn't installed. Try again later."}), 400
     subprocess.Popen([UPDATE["file"], "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
                      creationflags=0x00000008 | 0x00000200, close_fds=True)
     log_error(f"Installing update {UPDATE['latest']}")
@@ -4822,9 +4933,13 @@ def _pin_hash(pin: str, salt: str) -> str:
     return hashlib.pbkdf2_hmac("sha256", pin.encode(), salt.encode(), 120_000).hex()
 
 
+def _tok_hash(tok: str) -> str:
+    return hashlib.sha256(("jarvis-session:" + tok).encode()).hexdigest()
+
+
 def _valid_session() -> bool:
     tok = request.cookies.get("jarvis_session", "")
-    exp = SESSIONS.get(tok)
+    exp = SESSIONS.get(_tok_hash(tok)) if tok else None
     return bool(exp and exp > time.time())
 
 
@@ -4833,8 +4948,54 @@ def _save_sessions():
     save_config(CONFIG)
 
 
-SESSIONS.update(CONFIG.get("phone_sessions", {}) or {})
+SESSIONS.update({(k if re.fullmatch(r"[0-9a-f]{64}", k) else _tok_hash(k)): v
+                 for k, v in (CONFIG.get("phone_sessions", {}) or {}).items()})
 OPEN_PATHS = ("/login", "/api/login", "/manifest.webmanifest", "/sw.js", "/favicon.ico")
+
+
+# ---------- security headers: the pages may only load Jarvis's own code, and can't be framed ----------
+_csp_cache = {}
+
+
+def _csp_for(html_path: Path) -> str:
+    """Content-Security-Policy allowing only this server, plus the page's own inline startup script (by hash)."""
+    import base64
+    try:
+        mt = html_path.stat().st_mtime
+    except OSError:
+        mt = 0
+    hit = _csp_cache.get(html_path)
+    if hit and hit[0] == mt:
+        return hit[1]
+    hashes = []
+    try:
+        for body in re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html_path.read_text(encoding="utf-8"), re.S):
+            hashes.append("'sha256-" + base64.b64encode(hashlib.sha256(body.encode("utf-8")).digest()).decode() + "'")
+    except OSError:
+        pass
+    csp = ("default-src 'self'; script-src 'self' " + " ".join(hashes) + "; style-src 'self' 'unsafe-inline'; "
+           "img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+           "worker-src 'self'; manifest-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; "
+           "form-action 'self'; frame-ancestors 'none'")
+    _csp_cache[html_path] = (mt, csp)
+    return csp
+
+
+@app.after_request
+def _security_headers(resp):
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("Referrer-Policy", "no-referrer")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    h.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    h.setdefault("Permissions-Policy", "camera=(), geolocation=(), payment=(), usb=(), microphone=(self)")
+    if request.path in ("/", "/login") and resp.mimetype == "text/html":
+        h["Content-Security-Policy"] = _csp_for(WEB_DIR / ("login.html" if request.path == "/login" else "index.html"))
+    if request.path.startswith("/api/") and request.path not in ("/api/img", "/api/nowplaying/art") \
+            and not request.path.startswith("/api/tts"):
+        h.setdefault("Cache-Control", "no-store")                 # nothing personal stays in caches
+    return resp
 
 
 @app.before_request
@@ -4887,13 +5048,20 @@ def api_login():
         _pin_hash(pin, CONFIG.get("phone_pin_salt", "")), CONFIG["phone_pin_hash"])
     if not good or not CONFIG.get("phone_enabled"):
         LOGIN_FAILS["n"] += 1
-        if LOGIN_FAILS["n"] >= 5:
-            LOGIN_FAILS.update(n=0, until=now + 300)
-        log_error("Phone login: wrong PIN")
+        if LOGIN_FAILS["n"] >= 5:                      # 5 wrong PINs: locked 5 min, then 10, 20 ... up to a day
+            LOGIN_FAILS["lockouts"] = LOGIN_FAILS.get("lockouts", 0) + 1
+            LOGIN_FAILS.update(n=0, until=now + min(86400, 300 * 2 ** (LOGIN_FAILS["lockouts"] - 1)))
+            try:
+                announce("alert", "Someone typed the wrong phone PIN 5 times. Phone login is locked for a while. "
+                         "If it wasn't you, change the PIN in Settings > Phone.",
+                         "Sir, someone has entered the wrong phone PIN five times.")
+            except Exception:
+                pass
+        log_error(f"Phone login: wrong PIN from {request.headers.get('Tailscale-User-Login') or request.remote_addr}")
         return jsonify({"error": "Wrong PIN"}), 401
-    LOGIN_FAILS["n"] = 0
+    LOGIN_FAILS.update(n=0, lockouts=0)
     tok = secrets.token_urlsafe(32)
-    SESSIONS[tok] = now + SESSION_DAYS * 86400
+    SESSIONS[_tok_hash(tok)] = now + SESSION_DAYS * 86400     # only a hash is stored: a copied config can't log in
     _save_sessions()
     resp = jsonify({"ok": True})
     resp.set_cookie("jarvis_session", tok, max_age=SESSION_DAYS * 86400, httponly=True, secure=True, samesite="Strict")
