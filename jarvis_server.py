@@ -1083,9 +1083,19 @@ def _smtp_send(to: str, subject: str, body: str, in_reply_to: str = "", referenc
     return f"Email sent to {to}."
 
 
+# addresses a model invents when it doesn't know the real one
+_FAKE_MAIL = re.compile(r"@(?:[\w-]+\.)*(?:example|test|invalid|localhost|sample|placeholder)(?:\.[a-z]{2,})?$|^(?:user|someone|recipient|name|test|john\.?doe|jane\.?doe)@", re.I)
+
+
 def send_email(to: str, subject: str, body: str) -> dict:
-    if "@" not in (to or ""):
-        return {"error": "I need a full email address for 'to'"}
+    to = (to or "").strip()
+    own = (CONFIG.get("email_address") or "").strip()
+    if to.lower() in ("me", "myself", "my email", "self") and own:
+        to = own
+    if "@" not in to:
+        return {"error": "I need the recipient's real email address. Ask the user for it - never guess one."}
+    if to.lower() != own.lower() and _FAKE_MAIL.search(to):
+        return {"error": f"'{to}' is a made-up placeholder, not a real address. Ask the user for the recipient's real email address (their own is {own or 'not set'})."}
     if not CONFIG.get("email_app_password"):
         return {"error": "Email isn't set up yet - add your Gmail address and app password in Settings"}
     return _ask_confirm("email", f"Send email to {to}", f"Subject: {subject}\n\n{body}", "Send",
@@ -3107,7 +3117,7 @@ TOOLS = [
     ("list_reminders", list_reminders, "List upcoming reminders and scheduled tasks.", {}, []),
     ("send_email", send_email,
      "Send an email from the user's Gmail. The user sees the draft and must click Send in the app.",
-     {"to": P("string", "Recipient email address"), "subject": P("string", "Subject"),
+     {"to": P("string", "The recipient's real email address exactly as the user gave it, or 'me' for the user's own inbox. Never invent or guess one; ask if unknown"), "subject": P("string", "Subject"),
       "body": P("string", "Full email text, written as the user, signed with their name if known")}, ["to", "subject", "body"]),
     ("reply_email", reply_email,
      "Reply to the latest email that matches a Gmail search (e.g. 'from:dad', 'subject:exam'). User must click Send.",
@@ -3390,6 +3400,8 @@ Address the user as "sir". Be genuinely helpful first, charming second.
 Context:
 - Local date and time: {now:%A %d %B %Y, %H:%M} (today = {now:%Y-%m-%d}). User's city: {CONFIG.get("city")}.
 - Stock watchlist: {", ".join(CONFIG.get("watchlist", []))}.
+- The user's own email address: {CONFIG.get("email_address") or "not set"}. Use it when they say "email me" or "send it to myself".
+  For anyone else use only an address the user gave you or that appears in their emails; if you don't have it, ask. Never make one up.
 
 Who the user is (learned from your conversations; this is how you think like them):
 {mem}

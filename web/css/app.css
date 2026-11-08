@@ -1393,3 +1393,13 @@ body:has(#appBody:not([data-view="assistant"])) .aurora i { animation-play-state
 /* only the newest messages slide in */
 .msg { animation: none; }
 .msg:nth-last-child(-n+2) { animation: msg-in var(--t-panel) var(--ease-out); }
+
+/* Confirmations under the orb: stay until clicked, above the answer/music cards */
+.live-confirms { opacity: 1; translate: 0 0; }
+.live-confirms .confirm-box { display: flex; flex-direction: column; align-items: stretch; gap: var(--s-2); padding: var(--s-3) var(--s-4); font-size: var(--text-sm); border: 1px solid rgba(139, 123, 255, 0.35); background: var(--panel-solid, rgba(20, 18, 40, 0.92)); border-radius: var(--r-md); animation: pop 0.45s cubic-bezier(.2, .9, .3, 1.2) backwards; }
+.live-confirms .confirm-box.risky { border-color: rgba(255, 107, 129, 0.45); }
+.live-confirms .confirm-box.done { border-color: var(--glass-border); }
+.live-confirms .confirm-box .row { display: flex; justify-content: flex-end; gap: var(--s-2); }
+.live-confirms .cb-title { display: flex; align-items: center; gap: var(--s-2); }
+.live-confirms .cb-detail { white-space: pre-wrap; max-height: 9em; overflow: auto; color: var(--text-secondary); }
+#view-assistant.viewing .live-confirms { display: none; }

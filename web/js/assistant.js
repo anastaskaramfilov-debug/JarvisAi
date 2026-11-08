@@ -215,6 +215,42 @@ export function quoteRows(rows) {
 export const quotesTable = rows => `<table class="quotes"><thead><tr><th scope="col">Symbol</th><th scope="col"><span class="sr-only">Today's trend</span></th><th scope="col" class="r">Price</th><th scope="col" class="r">Today</th><th scope="col"><span class="sr-only">Chart</span></th></tr></thead><tbody>${quoteRows(rows)}</tbody></table>`;
 
 // Extras under a reply in History: quotes, sources, power confirmation and a small meta line.
+// One confirmation card. Every copy of the same request (History + under the orb) changes together.
+const KIND_ICON = { power: "power", email: "mail", delete: "trash", write: "file", close: "x", command: "keyboard" };
+function confirmCard(c) {
+  const d = document.createElement("div");
+  d.dataset.cid = c.id;
+  d.className = "confirm-box" + (c.kind === "power" || c.kind === "delete" || c.kind === "command" ? " risky" : "");
+  d.innerHTML = `<div class="cb-title">${icon(KIND_ICON[c.kind] || "alert")}<strong>${esc(c.title)}</strong></div>
+    ${c.detail ? `<div class="cb-detail">${esc(c.detail)}</div>` : ""}
+    <span class="row"><button class="btn sm ghost">Cancel</button><button class="btn sm ${c.kind === "email" ? "primary" : "danger"}">${esc(c.button || "Confirm")}</button></span>`;
+  const [no, yes] = d.querySelectorAll("button");
+  yes.onclick = async () => {
+    copies(c).forEach(x => x.querySelectorAll("button").forEach(b => (b.disabled = true)));
+    yes.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+    try {
+      const m = await api("/api/confirm/" + c.id, {});
+      settleCard(c, m.ok === false ? "failed" : "done", m.ok === false ? "alert" : "check", m.message);
+      if (m.ok !== false && c.kind !== "command") speak(m.message.split("\n")[0]);
+      emit("action-confirmed", c);
+    } catch (e) { settleCard(c, "failed", "alert", e.message); }
+  };
+  no.onclick = async () => {
+    try { await api("/api/cancel/" + c.id, {}); } catch (_) {}
+    settleCard(c, "done", "x", "Cancelled. Nothing was changed.");
+  };
+  return d;
+}
+function copies(c) { return $$(`.confirm-box[data-cid="${CSS.escape(String(c.id))}"]`); }
+function settleCard(c, cls, ic, msg) {
+  copies(c).forEach(d => {
+    d.classList.add(cls);
+    d.innerHTML = `<div class="cb-title">${icon(ic)}<strong>${esc(c.title)}</strong></div><div class="cb-detail">${esc(msg || "")}</div>`;
+    const live = d.closest("#liveConfirms");
+    if (live) setTimeout(() => { d.remove(); if (!live.children.length) live.hidden = true; }, 4000);
+  });
+}
+
 function renderExtras(r, msgEl) {
   const box = document.createElement("div");
   box.className = "msg-extras";
@@ -251,32 +287,14 @@ function renderExtras(r, msgEl) {
   if (src.length) box.insertAdjacentHTML("beforeend", `<div class="sources">${src.map(s => `<a class="source" href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.url)}">${icon("link")}<span>${esc(s.title || s.url)}</span></a>`).join("")}</div>`);
 
   // Anything that sends, deletes, replaces, closes or changes the PC waits for a click here
-  const KIND_ICON = { power: "power", email: "mail", delete: "trash", write: "file", close: "x", command: "keyboard" };
-  if ((r.confirm || []).length) revealHistory(true);
+  // ...shown both in History and under the orb on Home; either one works and both update
   (r.confirm || []).forEach(c => {
-    const d = document.createElement("div");
-    d.className = "confirm-box" + (c.kind === "power" || c.kind === "delete" || c.kind === "command" ? " risky" : "");
-    d.innerHTML = `<div class="cb-title">${icon(KIND_ICON[c.kind] || "alert")}<strong>${esc(c.title)}</strong></div>
-      ${c.detail ? `<div class="cb-detail">${esc(c.detail)}</div>` : ""}
-      <span class="row"><button class="btn sm ghost">Cancel</button><button class="btn sm ${c.kind === "email" ? "primary" : "danger"}">${esc(c.button || "Confirm")}</button></span>`;
-    const [no, yes] = d.querySelectorAll("button");
-    yes.onclick = async () => {
-      yes.disabled = no.disabled = true;
-      yes.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
-      try {
-        const m = await api("/api/confirm/" + c.id, {});
-        d.classList.add(m.ok === false ? "failed" : "done");
-        d.innerHTML = `<div class="cb-title">${icon(m.ok === false ? "alert" : "check")}<strong>${esc(c.title)}</strong></div><div class="cb-detail">${esc(m.message)}</div>`;
-        if (m.ok !== false && c.kind !== "command") speak(m.message.split("\n")[0]);
-        emit("action-confirmed", c);
-      } catch (e) { d.textContent = e.message; }
-    };
-    no.onclick = async () => {
-      try { await api("/api/cancel/" + c.id, {}); } catch (_) {}
-      d.classList.add("done");
-      d.innerHTML = `<div class="cb-title">${icon("x")}<strong>${esc(c.title)}</strong></div><div class="cb-detail">Cancelled. Nothing was changed.</div>`;
-    };
-    box.appendChild(d);
+    box.appendChild(confirmCard(c));
+    const live = $("#liveConfirms");
+    if (live && !live.querySelector(`[data-cid="${CSS.escape(String(c.id))}"]`)) {
+      live.appendChild(confirmCard(c));
+      live.hidden = false;
+    }
   });
 
   const used = new Map();

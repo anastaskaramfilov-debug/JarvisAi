@@ -307,12 +307,21 @@ async function gemini(body, model, ms = 25000) {
   }
   return j;
 }
-async function geminiAny(body, { lite = false, ms = 25000, where = "answer" } = {}) {
+// models that refused "don't think" are asked normally from then on
+const noThink = new Set();
+async function geminiAny(body, { lite = false, ms = 25000, where = "answer", fast = false } = {}) {
   let last;
   const list = models(lite);
   for (let i = 0; i < list.length; i++) {
-    try { return await gemini(body, list[i], ms); }
+    const m = list[i];
+    let b = body;
+    if (fast && !noThink.has(m)) b = { ...body, generationConfig: { ...(body.generationConfig || {}), thinkingConfig: { thinkingBudget: 0 } } };  // instant answer, like the PC
+    try { return await gemini(b, m, ms); }
     catch (e) {
+      if (b !== body && e.status === 400 && /think/i.test(e.message)) {          // this model must think: ask again without the setting
+        noThink.add(m);
+        try { return await gemini(body, m, ms); } catch (e2) { e = e2; }
+      }
       last = e; problem(where, e, list[i]);
       if (e.status === 400 || e.status === 401 || e.status === 403) break;     // the key or the request is wrong: another model won't help
       if (i < list.length - 1) setCaption(e.status === 429 ? "Gemini is busy, trying another model…" : "Gemini is slow, trying another model…", "status");
@@ -321,7 +330,7 @@ async function geminiAny(body, { lite = false, ms = 25000, where = "answer" } = 
   throw last || new Error("no Gemini model answered");
 }
 async function groundedSearch(query) {
-  const j = await geminiAny({ contents: [{ role: "user", parts: [{ text: `Search the web and answer briefly with the key facts and numbers: ${query}` }] }], tools: [{ google_search: {} }] }, { where: "web search" });
+  const j = await geminiAny({ contents: [{ role: "user", parts: [{ text: `Search the web and answer briefly with the key facts and numbers: ${query}` }] }], tools: [{ google_search: {} }] }, { lite: true, fast: true, where: "web search" });
   const c = j.candidates?.[0];
   const text = (c?.content?.parts || []).map(p => p.text || "").join("").trim();
   const src = (c?.groundingMetadata?.groundingChunks || []).map(g => g.web).filter(Boolean).slice(0, 4).map(w => ({ title: w.title, url: w.uri }));
@@ -335,7 +344,7 @@ async function think(userText) {
   const decls = Object.entries(TOOLS).map(([name, t]) => ({ name, description: t.desc, ...(Object.keys(t.params).length ? { parameters: { type: "object", properties: t.params, required: t.required || [] } } : {}) }));
   const used = [];
   for (let round = 0; round < 6; round++) {
-    const j = await geminiAny({ systemInstruction: { parts: [{ text: systemPrompt(userText) }] }, contents, tools: [{ function_declarations: decls }], generationConfig: { temperature: 0.6 } }, { where: "answering" });
+    const j = await geminiAny({ systemInstruction: { parts: [{ text: systemPrompt(userText) }] }, contents, tools: [{ function_declarations: decls }], generationConfig: { temperature: 0.6 } }, { lite: true, fast: true, ms: 20000, where: "answering" });
     const parts = j.candidates?.[0]?.content?.parts || [];
     const calls = parts.filter(p => p.functionCall);
     if (!calls.length) return { reply: parts.map(p => p.text || "").join("").trim() || "Done, sir.", used };
@@ -473,7 +482,7 @@ async function transcribe(wav) {
     { inline_data: { mime_type: "audio/wav", data: b64(wav) } },
     { text: "Write down exactly what the speaker says, in the language they speak (usually English or Bulgarian). Reply with only their words. If there is no clear speech, reply with nothing." }] }],
     generationConfig: { temperature: 0 } };
-  const j = await geminiAny(body, { lite: true, ms: 20000, where: "writing down your voice" });
+  const j = await geminiAny(body, { lite: true, fast: true, ms: 20000, where: "writing down your voice" });
   return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim().replace(/^["“]|["”]$/g, "");
 }
 
