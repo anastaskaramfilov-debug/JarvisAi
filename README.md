@@ -12,7 +12,7 @@ Your settings, keys and memory are stored in `%APPDATA%\Jarvis` on your PC, neve
 Keys are encrypted with Windows' own protection (DPAPI).
 
 ## Build
-Push a tag like `v2.2.0`: GitHub Actions builds `Jarvis.exe` with PyInstaller, wraps it in an Inno Setup installer
+Put a new number in `VERSION` and push: GitHub Actions builds `Jarvis.exe` with PyInstaller, wraps it in an Inno Setup installer
 and publishes it as a release (see `.github/workflows/build.yml`).
 
 Run from source: `Start Jarvis.bat` once (creates a Python environment), then `Jarvis.vbs`.

@@ -2,8 +2,9 @@ name: Build Jarvis
 
 on:
   push:
-    tags: ["v*"]          # a tag like v2.2.0 builds the installer and publishes it as a release
-  workflow_dispatch:      # or run it by hand from the Actions tab (test build, no release)
+    branches: [main]
+    paths: ["VERSION"]    # a new number in VERSION builds the installer and publishes it as release vX.Y.Z
+  workflow_dispatch:      # or run it by hand from the Actions tab
 
 permissions:
   contents: write
@@ -23,7 +24,7 @@ jobs:
       - name: Version
         shell: pwsh
         run: |
-          $v = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.$env:GITHUB_RUN_NUMBER" }
+          $v = (Get-Content VERSION -Raw).Trim()
           Set-Content -Path version.txt -Value $v -NoNewline
           Set-Content -Path repo.txt -Value $env:GITHUB_REPOSITORY -NoNewline
           "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -56,9 +57,10 @@ jobs:
           path: dist-installer/*.exe
 
       - name: Publish release
-        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
           files: dist-installer/*.exe
           name: Jarvis ${{ env.VERSION }}
           body: |
