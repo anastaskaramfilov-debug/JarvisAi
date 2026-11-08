@@ -77,3 +77,4 @@ body.phone { position: fixed; inset: 0; -webkit-user-select: none; user-select: 
 @media (prefers-reduced-motion: reduce) { .phone *, .phone *::before, .phone *::after { animation: none !important; } }
 
 :root:not([data-theme="light"]) .p-sheet-card { background: #14141F; }
+.p-problem { word-break: break-word; -webkit-user-select: text; user-select: text; }

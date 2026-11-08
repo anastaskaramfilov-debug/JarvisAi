@@ -5240,7 +5240,16 @@ def _sync_local() -> dict:
             "history": hist,
             "settings": {"gemini_api_key": CONFIG.get("gemini_api_key", ""), "gemini_model": CONFIG.get("gemini_model"),
                          "city": CONFIG.get("city"), "country": CONFIG.get("country", "BG"),
-                         "watchlist": CONFIG.get("watchlist", []), "pc_name": os.environ.get("COMPUTERNAME", "PC")}}
+                         "watchlist": CONFIG.get("watchlist", []), "pc_name": os.environ.get("COMPUTERNAME", "PC"),
+                         "models": _safe_models(False), "models_lite": _safe_models(True)}}
+
+
+def _safe_models(lite: bool) -> list:
+    """The Gemini models the PC knows work right now (shared with the phone)."""
+    try:
+        return model_chain(lite)[:5]
+    except Exception:
+        return []
 
 
 def _sync_apply(merged: dict) -> None:

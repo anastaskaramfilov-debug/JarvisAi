@@ -283,21 +283,45 @@ Rules:
 ${skills.length ? "\nSkills (routines the user taught you):\n" + skills.map(s => `- ${s.name}: ${s.description}`).join("\n") : ""}${hit ? `\n\nThis request matches the skill "${hit.name}". Follow its steps (use ask_pc for PC steps):\n${hit.instructions}` : ""}`;
 }
 
-function models() { return [...new Set([S.state.settings?.gemini_model, "gemini-flash-latest", "gemini-flash-lite-latest"].filter(Boolean))]; }
-async function gemini(body, model) {
+// the models the PC found working (shared through sync), then safe defaults; models that 404 are skipped from then on
+const deadModels = new Set();
+function models(lite = false) {
+  const st = S.state?.settings || {};
+  const list = lite ? [...(st.models_lite || []), "gemini-flash-lite-latest", "gemini-flash-latest"]
+                    : [...(st.models || []), st.gemini_model, "gemini-flash-latest", "gemini-flash-lite-latest"];
+  return [...new Set(list.filter(m => m && !deadModels.has(m)))].slice(0, 3);
+}
+// the last thing that went wrong, shown in Settings so it can be fixed
+function problem(where, e, model) {
+  const p = { at: new Date().toLocaleString(), where, model: model || "", status: e?.status || "", msg: String(e?.message || e) };
+  try { localStorage.setItem("jarvis.lastProblem", JSON.stringify(p)); } catch (_) {}
+  return p;
+}
+async function gemini(body, model, ms = 25000) {
   const r = await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": S.state.settings?.gemini_api_key || "" }, body: JSON.stringify(body) }, 40000);
+    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": S.state.settings?.gemini_api_key || "" }, body: JSON.stringify(body) }, ms);
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) { const e = new Error(j.error?.message || `Gemini ${r.status}`); e.status = r.status; throw e; }
+  if (!r.ok) {
+    if (r.status === 404) deadModels.add(model);
+    const e = new Error(j.error?.message || `Gemini error ${r.status}`); e.status = r.status; throw e;
+  }
   return j;
 }
-async function geminiAny(body) {
+async function geminiAny(body, { lite = false, ms = 25000, where = "answer" } = {}) {
   let last;
-  for (const m of models()) { try { return await gemini(body, m); } catch (e) { last = e; if (e.status === 400 || e.status === 403 || e.status === 401) break; } }
-  throw last || new Error("No Gemini model answered");
+  const list = models(lite);
+  for (let i = 0; i < list.length; i++) {
+    try { return await gemini(body, list[i], ms); }
+    catch (e) {
+      last = e; problem(where, e, list[i]);
+      if (e.status === 400 || e.status === 401 || e.status === 403) break;     // the key or the request is wrong: another model won't help
+      if (i < list.length - 1) setCaption(e.status === 429 ? "Gemini is busy, trying another model…" : "Gemini is slow, trying another model…", "status");
+    }
+  }
+  throw last || new Error("no Gemini model answered");
 }
 async function groundedSearch(query) {
-  const j = await geminiAny({ contents: [{ role: "user", parts: [{ text: `Search the web and answer briefly with the key facts and numbers: ${query}` }] }], tools: [{ google_search: {} }] });
+  const j = await geminiAny({ contents: [{ role: "user", parts: [{ text: `Search the web and answer briefly with the key facts and numbers: ${query}` }] }], tools: [{ google_search: {} }] }, { where: "web search" });
   const c = j.candidates?.[0];
   const text = (c?.content?.parts || []).map(p => p.text || "").join("").trim();
   const src = (c?.groundingMetadata?.groundingChunks || []).map(g => g.web).filter(Boolean).slice(0, 4).map(w => ({ title: w.title, url: w.uri }));
@@ -311,7 +335,7 @@ async function think(userText) {
   const decls = Object.entries(TOOLS).map(([name, t]) => ({ name, description: t.desc, ...(Object.keys(t.params).length ? { parameters: { type: "object", properties: t.params, required: t.required || [] } } : {}) }));
   const used = [];
   for (let round = 0; round < 6; round++) {
-    const j = await geminiAny({ systemInstruction: { parts: [{ text: systemPrompt(userText) }] }, contents, tools: [{ function_declarations: decls }], generationConfig: { temperature: 0.6 } });
+    const j = await geminiAny({ systemInstruction: { parts: [{ text: systemPrompt(userText) }] }, contents, tools: [{ function_declarations: decls }], generationConfig: { temperature: 0.6 } }, { where: "answering" });
     const parts = j.candidates?.[0]?.content?.parts || [];
     const calls = parts.filter(p => p.functionCall);
     if (!calls.length) return { reply: parts.map(p => p.text || "").join("").trim() || "Done, sir.", used };
@@ -373,81 +397,83 @@ async function toggleListen() {
   if (rec) { rec.stopNow(); return; }
   if (busy) { setCaption("Still working on your last question…", "status"); return; }
   stopSpeaking();
+  // the audio engine must be started inside the tap, or iPhone keeps it paused
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume().catch(() => {});
   let stream;
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
-  catch (_) { setState("error"); setCaption("Jarvis can't use the microphone. Allow it in iPhone Settings › Safari › Microphone, or type instead.", "error"); return; }
-  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
-  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-  const chunks = [];
-  mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-  const ac = new (window.AudioContext || window.webkitAudioContext)();
-  const an = ac.createAnalyser(); an.fftSize = 1024;
-  ac.createMediaStreamSource(stream).connect(an);
-  const buf = new Float32Array(an.fftSize);
-  let heard = false, loudAt = 0, noise = 0.01, frames = 0;
+  catch (_) { ac.close().catch(() => {}); setState("error"); setCaption("Jarvis can't use the microphone. Allow it in iPhone Settings › Safari › Microphone, or type instead.", "error"); return; }
+  if (ac.state !== "running") await ac.resume().catch(() => {});
+  const src = ac.createMediaStreamSource(stream);
+  const proc = ac.createScriptProcessor(4096, 1, 1);      // hands us the raw sound, no recorder and no decoding needed
+  const pcm = [];
+  let heard = false, loudAt = 0, noise = 0.008, blocks = 0, done = false;
   const t0 = performance.now();
-  let done = false;
   const finish = () => {
     if (done) return; done = true;
-    if (mr.state !== "inactive") mr.stop();
-    stream.getTracks().forEach(t => t.stop());                   // gives the speaker back (iPhone routes audio to the earpiece while recording)
+    try { src.disconnect(); proc.disconnect(); } catch (_) {}
+    stream.getTracks().forEach(t => t.stop());               // gives the speaker back (iPhone uses the earpiece while recording)
     ac.close().catch(() => {});
     $("#micBtn").classList.remove("rec");
-  };
-  rec = { stopNow: finish };
-  mr.onstop = async () => {
     rec = null;
-    if (!heard || !chunks.length) { setState("idle"); setCaption("I didn't hear anything, sir. Tap the orb and speak.", "status"); return; }
-    setState("compute"); setCaption("Writing down what you said…", "status");
-    try {
-      const text = await transcribe(new Blob(chunks, { type: mr.mimeType || mime || "audio/mp4" }));
-      if (!text) { setState("idle"); setCaption("I couldn't make that out, sir. Try again?", "status"); return; }
-      ask(text);
-    } catch (e) { setState("error"); setCaption("Couldn't understand the recording: " + e.message, "error"); }
+    after();
   };
-  const tick = () => {
+  proc.onaudioprocess = e => {
     if (done) return;
-    an.getFloatTimeDomainData(buf);
-    let sum = 0; for (const x of buf) sum += x * x;
-    const rms = Math.sqrt(sum / buf.length), t = performance.now() - t0;
-    if (++frames < 15) noise = Math.max(noise, rms * 1.6);           // learn the room's background noise
-    if (rms > Math.max(0.02, noise * 2)) { heard = true; loudAt = t; }
+    const d = e.inputBuffer.getChannelData(0);
+    pcm.push(new Float32Array(d));
+    let sum = 0; for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
+    const rms = Math.sqrt(sum / d.length), t = performance.now() - t0;
+    if (++blocks <= 3) noise = Math.max(noise, rms * 1.8);   // learn the room's background noise
+    if (rms > Math.max(0.015, noise * 2)) { heard = true; loudAt = t; }
     $("#orb").style.setProperty("--lvl", Math.min(1, rms * 12).toFixed(2));
-    if ((heard && t - loudAt > 1300) || (!heard && t > 7000) || t > 25000) return finish();
-    requestAnimationFrame(tick);
+    if ((heard && t - loudAt > 1300) || (!heard && t > 7000) || t > 25000) finish();
   };
-  mr.start(250);
+  src.connect(proc); proc.connect(ac.destination);
+  const rate = ac.sampleRate;
+  rec = { stopNow: finish };
   setState("listening"); setCaption("Listening…", "status");
   $("#micBtn").classList.add("rec");
-  requestAnimationFrame(tick);
+
+  async function after() {
+    if (!heard || !pcm.length) { setState("idle"); setCaption("I didn't hear anything, sir. Tap the orb and speak.", "status"); return; }
+    setState("compute"); setCaption("Writing down what you said…", "status");
+    try {
+      const text = await withTimeout(transcribe(toWav(pcm, rate)), 45000, "writing down your voice took too long");
+      if (!text) { setState("idle"); setCaption("I couldn't make that out, sir. Try again?", "status"); return; }
+      ask(text);
+    } catch (e) { problem("writing down your voice", e); setState("error"); setCaption("Couldn't write down what you said: " + e.message, "error"); }
+  }
+}
+function withTimeout(promise, ms, msg) {
+  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error(msg)), ms))]);
 }
 
-// turn the recording into 16 kHz mono WAV (a format Gemini always accepts), then ask Gemini to write it down
-async function toWav(blob) {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
-  ctx.close().catch(() => {});
-  const rate = 16000, len = Math.ceil(audio.duration * rate);
-  const off = new OfflineAudioContext(1, len, rate);
-  const src = off.createBufferSource(); src.buffer = audio; src.connect(off.destination); src.start();
-  const pcm = (await off.startRendering()).getChannelData(0);
-  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
-  const w = (o, str) => [...str].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
-  w(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt ");
-  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, rate, true);
-  out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, "data"); out.setUint32(40, pcm.length * 2, true);
-  for (let i = 0; i < pcm.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+// raw sound -> 16 kHz mono WAV (a format Gemini always accepts)
+function toWav(chunks, rate) {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const ratio = rate / 16000, len = Math.floor(total / ratio);
+  const flat = new Float32Array(total);
+  let o = 0; for (const c of chunks) { flat.set(c, o); o += c.length; }
+  const out = new DataView(new ArrayBuffer(44 + len * 2));
+  const w = (p, str) => [...str].forEach((ch, i) => out.setUint8(p + i, ch.charCodeAt(0)));
+  w(0, "RIFF"); out.setUint32(4, 36 + len * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, 16000, true);
+  out.setUint32(28, 32000, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, "data"); out.setUint32(40, len * 2, true);
+  for (let i = 0; i < len; i++) {                         // average the samples that fall into each 1/16000 s
+    const a = Math.floor(i * ratio), b = Math.min(total, Math.floor((i + 1) * ratio));
+    let sum = 0; for (let k = a; k < b; k++) sum += flat[k];
+    const v = b > a ? sum / (b - a) : flat[a] || 0;
+    out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, v)) * 0x7fff, true);
+  }
   return out.buffer;
 }
-async function transcribe(blob) {
-  const wav = await toWav(blob);
+async function transcribe(wav) {
   const body = { contents: [{ role: "user", parts: [
     { inline_data: { mime_type: "audio/wav", data: b64(wav) } },
     { text: "Write down exactly what the speaker says, in the language they speak (usually English or Bulgarian). Reply with only their words. If there is no clear speech, reply with nothing." }] }],
     generationConfig: { temperature: 0 } };
-  let j, last;
-  for (const m of ["gemini-flash-lite-latest", ...models()]) { try { j = await gemini(body, m); break; } catch (e) { last = e; } }
-  if (!j) throw last || new Error("no model answered");
+  const j = await geminiAny(body, { lite: true, ms: 20000, where: "writing down your voice" });
   return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim().replace(/^["“]|["”]$/g, "");
 }
 
@@ -507,8 +533,13 @@ async function ask(text) {
   setState("compute"); setCaption(text, "you");
   const d = new Date(), stamp = { t: hm(d), d: ymd(d) };
   let reply, ok = true;
-  try { reply = (await think(text)).reply; }
-  catch (e) { ok = false; reply = `I couldn't reach my brain, sir (${e.message}). Check the internet and try again.`; }
+  try { reply = (await withTimeout(think(text), 90000, "it took too long")).reply; }
+  catch (e) {
+    ok = false; problem("answering", e);
+    reply = e.status === 400 || e.status === 403 ? `Gemini refused the request, sir: ${e.message}`
+          : e.status === 429 ? "Gemini's free limit is used up for the moment, sir. Try again in a minute."
+          : `I couldn't reach my brain, sir (${e.message}). Try again in a moment.`;
+  }
   finally { busy = false; $("#sendBtn").disabled = false; }
   setCaption(reply, ok ? "jarvis" : "error");
   if (ok) {
@@ -639,7 +670,12 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#spokenBtn").onclick = () => setSpeak(!speakOn);
   $("#histBtn").onclick = () => { renderThread(); openSheet("#histSheet"); };
   $("#tasksBtn").onclick = () => { renderTasks(); openSheet("#tasksSheet"); };
-  $("#menuBtn").onclick = () => { const v = bestVoice(); $("#mVoice").textContent = v ? v.name : "System voice"; openSheet("#menuSheet"); };
+  $("#menuBtn").onclick = () => {
+    const v = bestVoice(); $("#mVoice").textContent = v ? v.name : "System voice";
+    let p = null; try { p = JSON.parse(localStorage.getItem("jarvis.lastProblem") || "null"); } catch (_) {}
+    $("#mProblem").textContent = p ? `${p.at} · ${p.where}${p.model ? " · " + p.model : ""}${p.status ? " · " + p.status : ""}: ${p.msg}` : "None";
+    openSheet("#menuSheet");
+  };
   $$("[data-close]").forEach(b => b.onclick = closeSheets);
   $$(".p-sheet").forEach(s => s.onclick = e => { if (e.target === s) closeSheets(); });
   $("#taskAdd").onsubmit = e => { e.preventDefault(); const v = $("#taskText").value.trim(); if (!v) return; $("#taskText").value = ""; closeSheets(); ask("Add a task: " + v); };
