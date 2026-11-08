@@ -240,7 +240,39 @@ async function loadPhone(action, extra = {}) {
   if (st.enabled && st.url) { $("#phoneUrl").textContent = st.url; $("#phoneQrImg").src = "/api/phone/qr?t=" + Date.now(); }
 }
 
-export function onSettingsShown() { loadConfig(); loadMemory(); loadConnectorPages(); if (!IS_REMOTE) loadPhone(); }
+/* ---------- phone app sync ---------- */
+async function loadSync() {
+  let st;
+  try { st = await api("/api/sync"); } catch (e) { $("#syncHead").textContent = "Couldn't check sync"; return; }
+  const on = st.enabled, s = st.status || {};
+  $("#syncSetup").hidden = on; $("#syncReady").hidden = !on; $("#syncNowBtn").hidden = !on;
+  $("#syncDot").className = "status-dot " + (!on ? "" : s.state === "error" ? "bad" : "ok");
+  $("#syncHead").textContent = !on ? "Phone app sync is off" : s.state === "error" ? "Sync problem" : "Syncing with your phone";
+  $("#syncLine").textContent = !on ? "Set it up once below." : s.state === "error" ? s.error : `${st.repo}${s.last ? " · last sync " + new Date(s.last * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}`;
+  if (on) $("#syncQr").src = "/api/sync/qr?t=" + Date.now();
+}
+function initSync() {
+  $("#syncOn").onclick = async () => {
+    const out = $("#syncOut"), b = $("#syncOn");
+    const pass = $("#syncPass").value, pass2 = $("#syncPass2").value;
+    if (pass !== pass2) { out.className = "test-out bad"; out.textContent = "The passphrases don't match."; return; }
+    b.disabled = true; out.className = "test-out"; out.textContent = "Checking and making the first encrypted copy…";
+    try {
+      const r = await api("/api/sync/setup", { repo: $("#syncRepo").value, token: $("#syncToken").value, passphrase: pass });
+      if (r.error) { out.className = "test-out bad"; out.textContent = r.error; return; }
+      ["#syncToken", "#syncPass", "#syncPass2"].forEach(x => $(x).value = "");
+      out.textContent = ""; toast("Phone sync is on"); loadSync();
+    } catch (e) { out.className = "test-out bad"; out.textContent = e.message; }
+    finally { b.disabled = false; }
+  };
+  $("#syncOff").onclick = async () => {
+    if (!(await confirmDialog({ title: "Turn off phone sync?", body: "The phone app stops syncing. The encrypted copy stays in your GitHub repo until you delete it.", confirm: "Turn off", danger: true }))) return;
+    await api("/api/sync/off", {}).catch(e => toast(e.message)); loadSync();
+  };
+  $("#syncNowBtn").onclick = async () => { await api("/api/sync/now", {}).catch(e => toast(e.message)); loadSync(); };
+}
+
+export function onSettingsShown() { loadConfig(); loadMemory(); loadConnectorPages(); if (!IS_REMOTE) { loadPhone(); loadSync(); } }
 
 /* ---------- install as an app (hides the grey title bar) ---------- */
 let installEvent = null;
@@ -282,6 +314,7 @@ export function initSettings() {
   };
   initProfile();
   initConnectors();
+  initSync();
   const tabs = $$(".settings-nav [role=tab]");
   tabs.forEach((t, i) => {
     t.onclick = () => showSettingsPage(t.dataset.page);

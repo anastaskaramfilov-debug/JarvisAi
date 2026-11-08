@@ -540,7 +540,38 @@
           </div>
 
           <div class="settings-page" id="set-phone" role="tabpanel">
-            <h2>Phone</h2><p class="lead">Use Jarvis from your phone, anywhere, with voice. Your PC must be on with Jarvis running. The connection is private through Tailscale and protected by your PIN.</p>
+            <h2>Phone</h2><p class="lead">Two ways to have Jarvis on your phone. The phone app works on its own, even when this PC is off.</p>
+            <div class="settings-group" id="syncGroup">
+              <h3>Phone app (works when the PC is off)</h3>
+              <p class="secondary" style="margin-bottom:12px">Your phone gets its own Jarvis (same Gemini brain and voice). Your profile, tasks, skills and conversation sync through a <strong>private GitHub repo</strong>, encrypted with a passphrase only you know, so GitHub only ever sees scrambled data. When this PC is on, the phone can also ask it to do PC things.</p>
+              <div class="conn" role="status"><span class="status-dot" id="syncDot" aria-hidden="true"></span><span class="grow"><strong id="syncHead">Checking…</strong><small id="syncLine"></small></span><button class="btn sm" id="syncNowBtn" type="button" hidden><i data-icon="refresh"></i><span>Sync now</span></button></div>
+              <div id="syncSetup">
+                <ol class="steps">
+                  <li>On GitHub, create a <a href="https://github.com/new?name=jarvis-sync&amp;visibility=private" target="_blank" rel="noopener">new <strong>private</strong> repository</a> named <strong>jarvis-sync</strong> (tick "Add a README").</li>
+                  <li>Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a>: name it Jarvis sync, Repository access <strong>Only select repositories → jarvis-sync</strong>, Permissions <strong>Contents → Read and write</strong>. Generate and copy it.</li>
+                  <li>Paste it below, choose a passphrase (a short sentence you'll remember: it can't be recovered), and click Turn on.</li>
+                </ol>
+                <div class="field-row">
+                  <div class="field"><label for="syncRepo">Sync repo</label><input class="input" id="syncRepo" placeholder="yourname/jarvis-sync" autocomplete="off" spellcheck="false"></div>
+                  <div class="field"><label for="syncToken">Token</label><input class="input" id="syncToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
+                </div>
+                <div class="field-row">
+                  <div class="field"><label for="syncPass">Passphrase</label><input class="input" id="syncPass" type="password" autocomplete="new-password" placeholder="At least 10 characters"></div>
+                  <div class="field"><label for="syncPass2">Passphrase again</label><input class="input" id="syncPass2" type="password" autocomplete="new-password"></div>
+                </div>
+                <div class="test-row"><button class="btn primary" id="syncOn" type="button"><i data-icon="check"></i><span>Turn on</span></button><span class="test-out" id="syncOut" role="status"></span></div>
+              </div>
+              <div id="syncReady" hidden>
+                <ol class="steps">
+                  <li>On your iPhone, open the <strong>Camera</strong> and scan this code. Jarvis opens in Safari.</li>
+                  <li>Type your passphrase and tap Connect.</li>
+                  <li>Tap <strong>Share → Add to Home Screen</strong>. Jarvis now has his own icon.</li>
+                </ol>
+                <div class="qr-wrap"><img id="syncQr" alt="QR code that connects your phone" width="220" height="220"><p class="hint">The code holds the repo and its key, never your passphrase. Keep it private.</p></div>
+                <button class="btn ghost sm danger" id="syncOff" type="button">Turn off sync</button>
+              </div>
+            </div>
+            <h2 class="sub-h2">Use the PC's Jarvis from the phone</h2><p class="lead">The full PC Jarvis on your phone, through Tailscale and your PIN. Your PC must be on.</p>
             <div class="conn" role="status">
               <span class="status-dot" id="phoneDot" aria-hidden="true"></span>
               <span class="grow"><strong id="phoneHead">Checking…</strong><small id="phoneLine"></small></span>

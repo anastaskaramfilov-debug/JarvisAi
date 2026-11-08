@@ -1372,3 +1372,4 @@ svg.icon.lg { width: var(--icon-lg); height: var(--icon-lg); }
 .native .win-controls .win-close:hover { background: #E81123; color: #fff; }
 .native .app-header { user-select: none; }
 .native .native-hide { display: none !important; }
+.qr-wrap { display: flex; align-items: center; gap: 16px; margin: 6px 0 14px; } .qr-wrap img { border-radius: 12px; background: #fff; padding: 8px; } .qr-wrap .hint { max-width: 260px; }

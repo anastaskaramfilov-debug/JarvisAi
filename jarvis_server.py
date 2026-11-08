@@ -149,7 +149,8 @@ _cfg_lock = threading.Lock()
 
 # Keys and passwords are encrypted with Windows' own protection (DPAPI): only your Windows account on this PC
 # can read them back, so a copy of jarvis_config.json is useless to anyone else.
-SECRET_KEYS = ("gemini_api_key", "claude_api_key", "email_app_password", "cf_api_token", "calendar_ics_url")
+SECRET_KEYS = ("gemini_api_key", "claude_api_key", "email_app_password", "cf_api_token", "calendar_ics_url",
+               "sync_token", "sync_passphrase")
 
 
 def _dpapi(data: bytes, protect: bool) -> bytes:
@@ -2439,8 +2440,20 @@ def _load_reminders() -> list:
         return []
 
 
-def _save_reminders(items: list) -> None:
+def _write_reminders_raw(items: list) -> None:
     REMINDERS_FILE.write_text(json.dumps(items, indent=2), encoding="utf-8")
+
+
+def _save_reminders(items: list) -> None:
+    _write_reminders_raw(items)
+    _sync_changed()
+
+
+def _sync_changed():
+    try:
+        JS.changed()
+    except Exception:
+        pass
 
 
 def _next_valid(dt: datetime.datetime, repeat: str) -> datetime.datetime:
@@ -2798,12 +2811,17 @@ def _load_profile() -> list:
     return facts
 
 
+def _write_profile_raw(facts: list) -> None:
+    PROFILE_FILE.write_text(json.dumps({"facts": facts}, indent=1, ensure_ascii=False), encoding="utf-8")
+
+
 def _save_profile(facts: list) -> None:
     learned = [f for f in facts if f["src"] == "learned"]
     if len(learned) > 120:                 # keep it small: the oldest learned items go first
         drop = {f["id"] for f in learned[:len(learned) - 120]}
         facts = [f for f in facts if f["id"] not in drop]
-    PROFILE_FILE.write_text(json.dumps({"facts": facts}, indent=1, ensure_ascii=False), encoding="utf-8")
+    _write_profile_raw(facts)
+    _sync_changed()
 
 
 def _add_fact(facts: list, cat: str, text: str, src: str) -> bool:
@@ -3940,8 +3958,15 @@ def _chat(user_text: str, emit, voice: bool, keep: bool) -> dict:
     if ok and keep:
         maybe_learn(prev_q, user_text, reply)
     if keep and ok:            # failed attempts aren't remembered (else Jarvis may "finish" them later by surprise)
-        HISTORY.append({"role": "user", "text": user_text, "t": f"{datetime.datetime.now():%H:%M}"})
-        HISTORY.append({"role": "assistant", "text": reply, "t": f"{datetime.datetime.now():%H:%M}"})
+        now_ts = time.time()
+        HISTORY.append({"role": "user", "text": user_text, "t": f"{datetime.datetime.now():%H:%M}",
+                        "d": f"{datetime.date.today()}", "ts": now_ts})
+        HISTORY.append({"role": "assistant", "text": reply, "t": f"{datetime.datetime.now():%H:%M}",
+                        "d": f"{datetime.date.today()}", "ts": now_ts + 0.001})
+        try:
+            JS.changed()
+        except Exception:
+            pass
         _save_history()
     confirms = []
     for x in log:
@@ -5187,6 +5212,110 @@ JC.init(log=log_error, seal=_seal, unseal=_unseal, confirm=_ask_confirm, base=BA
         is_remote=_is_remote, extract_text=_know_text, now_playing=lambda: _winrt_media() or {},
         press_play=lambda: _press(VK_PLAY), media=media_control)
 JC.register(app)
+
+# Phone app sync (end-to-end encrypted, through a private GitHub repo) lives in jarvis_sync.py
+import jarvis_sync as JS
+
+
+def _sync_local() -> dict:
+    hist = [dict(m, ts=m.get("ts", 0)) for m in HISTORY[-200:]]
+    return {"facts": _load_profile(), "tasks": _load_reminders(),
+            "skills": [{"name": k["name"], "description": k["description"], "instructions": k["instructions"]}
+                       for k in JC.list_skills()],
+            "history": hist,
+            "settings": {"gemini_api_key": CONFIG.get("gemini_api_key", ""), "gemini_model": CONFIG.get("gemini_model"),
+                         "city": CONFIG.get("city"), "country": CONFIG.get("country", "BG"),
+                         "watchlist": CONFIG.get("watchlist", []), "pc_name": os.environ.get("COMPUTERNAME", "PC")}}
+
+
+def _sync_apply(merged: dict) -> None:
+    """Brings what the phone changed into the PC's own files (only what differs)."""
+    with _profile_lock:
+        if merged["facts"] != _load_profile():
+            _write_profile_raw(merged["facts"])
+    with _rem_lock:
+        if merged["tasks"] != _load_reminders():
+            _write_reminders_raw(merged["tasks"])
+    have = {k["name"].lower(): k for k in JC.list_skills()}
+    want = {k["name"].lower(): k for k in merged["skills"]}
+    for n, k in want.items():
+        h = have.get(n)
+        if not h or (h["description"], h["instructions"]) != (k["description"], k["instructions"]):
+            JC.save_skill(k["name"], k["description"], k["instructions"])
+    for n, h in have.items():
+        if n not in want:
+            JC.delete_skill(h["name"])
+    keys = {JS._hist_key(m) for m in HISTORY}
+    new = [m for m in merged["history"] if JS._hist_key(dict(m, ts=m.get("ts", 0))) not in keys
+           and JS._hist_key(m) not in keys]
+    if new:
+        HISTORY.extend(new)
+        HISTORY.sort(key=lambda m: m.get("ts", 0))
+        _save_history()
+
+
+def _phone_chat(text: str) -> dict:
+    return chat(text, emit=None, voice=False, keep=True)
+
+
+JS.start(log=log_error, data_dir=DATA, config=lambda: CONFIG, save_config=lambda: save_config(CONFIG),
+         get_local=_sync_local, apply=_sync_apply, chat=_phone_chat)
+
+
+def _phone_app_url() -> str:
+    owner, _, repo = (GITHUB_REPO or "anastaskaramfilov-debug/JarvisAi").partition("/")
+    return f"https://{owner.lower()}.github.io/{repo}/"
+
+
+@app.get("/api/sync")
+def api_sync_status():
+    if _is_remote():
+        return jsonify({"error": "PC only"}), 403
+    return jsonify({"enabled": JS.enabled(), "repo": CONFIG.get("sync_repo", ""), "status": JS.STATUS,
+                    "app_url": _phone_app_url()})
+
+
+@app.post("/api/sync/setup")
+def api_sync_setup():
+    if _is_remote():
+        return jsonify({"error": "Set this up on the PC"}), 403
+    b = request.json or {}
+    try:
+        return jsonify(JS.setup(b.get("repo", ""), b.get("token", ""), b.get("passphrase", "")))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.post("/api/sync/off")
+def api_sync_off():
+    if _is_remote():
+        return jsonify({"error": "PC only"}), 403
+    JS.turn_off()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/sync/now")
+def api_sync_now():
+    if _is_remote():
+        return jsonify({"error": "PC only"}), 403
+    return jsonify(JS.sync_now("manual"))
+
+
+@app.get("/api/sync/qr")
+def api_sync_qr():
+    """QR code that sets up the phone app: it carries the repo and its key, never the passphrase."""
+    from flask import Response
+    import base64
+    import io
+    import qrcode
+    if _is_remote() or not JS.enabled():
+        return ("", 404)
+    payload = base64.urlsafe_b64encode(json.dumps({"repo": CONFIG["sync_repo"], "token": CONFIG["sync_token"]})
+                                       .encode()).decode().rstrip("=")
+    img = qrcode.make(_phone_app_url() + "#setup=" + payload)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(buf.getvalue(), mimetype="image/png", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/sw.js")
