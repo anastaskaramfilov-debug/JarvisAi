@@ -1,6 +1,16 @@
 // Jarvis on the phone: his own Gemini brain and voice, your profile and tasks synced with the PC through a private
 // GitHub repo, end-to-end encrypted with your passphrase (same format as jarvis_sync.py on the PC).
+import { icon, hydrateIcons } from "./pc/icons.js";
+
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+// every network call has a time limit, so Jarvis can never hang silently
+async function fetchT(url, opts = {}, ms = 30000) {
+  const ac = new AbortController(), t = setTimeout(() => ac.abort(), ms);
+  try { return await fetch(url, { ...opts, signal: ac.signal }); }
+  catch (e) { throw new Error(e.name === "AbortError" ? "the connection timed out" : "no internet connection"); }
+  finally { clearTimeout(t); }
+}
 const enc = new TextEncoder(), dec = new TextDecoder();
 const b64 = buf => { const a = new Uint8Array(buf); let s = ""; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -52,11 +62,11 @@ async function localOpen(name) { const t = await kvGet(name); if (!t) return nul
 const S = { key: null, salt: null, iter: 600000, repo: "", token: "", state: null, base: null, shas: {}, etags: {} };
 
 async function gh(method, path, body, extra = {}) {
-  const r = await fetch(`https://api.github.com/repos/${S.repo}/contents/${path}`, {
+  const r = await fetchT(`https://api.github.com/repos/${S.repo}/contents/${path}`, {
     method, cache: "no-store",
     headers: { Authorization: `Bearer ${S.token}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(body ? { "Content-Type": "application/json" } : {}), ...extra },
     body: body ? JSON.stringify(body) : undefined,
-  });
+  }, 25000);
   return r;
 }
 async function readFile(name, etag = false) {
@@ -215,11 +225,11 @@ const TOOLS = {
   get_weather: { desc: "Weather now and the next days for a place (default: the user's city).", params: { place: P("string", "Town or city (optional)") },
     run: async a => {
       const place = a.place || S.state.settings?.city || "Sofia";
-      const g = await (await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=10&language=en`)).json();
+      const g = await (await fetchT(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=10&language=en`)).json();
       const cc = (S.state.settings?.country || "BG").toUpperCase();
       const loc = (g.results || []).find(r => r.country_code === cc) || (g.results || [])[0];
       if (!loc) return { error: `Couldn't find ${place}` };
-      const w = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code&timezone=auto&forecast_days=4`)).json();
+      const w = await (await fetchT(`https://api.open-meteo.com/v1/forecast?latitude=${loc.latitude}&longitude=${loc.longitude}&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code&timezone=auto&forecast_days=4`)).json();
       return { place: `${loc.name}, ${loc.country}`, now_c: Math.round(w.current.temperature_2m), feels_c: Math.round(w.current.apparent_temperature), code: w.current.weather_code,
         days: w.daily.time.map((d, i) => ({ date: d, high: Math.round(w.daily.temperature_2m_max[i]), low: Math.round(w.daily.temperature_2m_min[i]), rain_chance: w.daily.precipitation_probability_max[i] })) };
     } },
@@ -275,15 +285,15 @@ ${skills.length ? "\nSkills (routines the user taught you):\n" + skills.map(s =>
 
 function models() { return [...new Set([S.state.settings?.gemini_model, "gemini-flash-latest", "gemini-flash-lite-latest"].filter(Boolean))]; }
 async function gemini(body, model) {
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": S.state.settings?.gemini_api_key || "" }, body: JSON.stringify(body) });
+  const r = await fetchT(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": S.state.settings?.gemini_api_key || "" }, body: JSON.stringify(body) }, 40000);
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(j.error?.message || `Gemini ${r.status}`); e.status = r.status; throw e; }
   return j;
 }
 async function geminiAny(body) {
   let last;
-  for (const m of models()) { try { return await gemini(body, m); } catch (e) { last = e; if (e.status === 400 || e.status === 403) break; } }
+  for (const m of models()) { try { return await gemini(body, m); } catch (e) { last = e; if (e.status === 400 || e.status === 403 || e.status === 401) break; } }
   throw last || new Error("No Gemini model answered");
 }
 async function groundedSearch(query) {
@@ -320,86 +330,193 @@ async function think(userText) {
 }
 
 /* =========================================================================
-   Voice
+   Voice out: iPhone only lets a page speak after a tap, so the first tap anywhere unlocks speech.
+   Long answers are spoken sentence by sentence (iOS cuts long utterances off).
    ========================================================================= */
 let speakOn = localStorage.getItem("jarvis.speak") !== "off";
-function voice() {
-  const vs = speechSynthesis.getVoices();
-  return vs.find(v => /Daniel|Arthur|Oliver/i.test(v.name) && /en-GB/i.test(v.lang)) || vs.find(v => /en-GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang));
+let speechUnlocked = false, speaking = [];
+function unlockSpeech() {
+  if (speechUnlocked || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u);
+  speechUnlocked = true;
+}
+function bestVoice() {
+  const vs = speechSynthesis.getVoices().filter(v => /^en/i.test(v.lang));
+  const score = v => (/en-GB/i.test(v.lang) ? 4 : 0) + (/enhanced|premium|neural/i.test(v.name) ? 3 : 0) +
+    (/Daniel|Arthur|Oliver|Jamie|Malcolm/i.test(v.name) ? 2 : 0) - (/compact|eloquence|novelty|whisper|bad news|bells|organ|zarvox|trinoids|albert|jester|boing/i.test(v.name) ? 6 : 0);
+  return vs.sort((a, b) => score(b) - score(a))[0];
 }
 function say(text) {
   if (!speakOn || !text || !("speechSynthesis" in window)) return;
   speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/https?:\/\/\S+/g, ""));
-  const v = voice(); if (v) { u.voice = v; u.lang = v.lang; }
-  u.rate = 1.02;
-  u.onstart = () => setOrb("speaking"); u.onend = u.onerror = () => setOrb("idle");
-  speechSynthesis.speak(u);
+  const parts = text.replace(/https?:\/\/\S+/g, "").match(/[^.!?]+[.!?]*\s*/g) || [text];
+  const v = bestVoice();
+  speaking = parts.map((p, i) => {
+    const u = new SpeechSynthesisUtterance(p.trim());
+    if (v) { u.voice = v; u.lang = v.lang; }
+    u.rate = 1.0; u.pitch = 0.95;
+    if (i === 0) u.onstart = () => setState("speaking");
+    if (i === parts.length - 1) u.onend = u.onerror = () => { if (state === "speaking") setState("idle"); };
+    return u;
+  });
+  speaking.forEach(u => speechSynthesis.speak(u));              // the array keeps them from being garbage-collected
 }
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function stopSpeaking() { if ("speechSynthesis" in window) speechSynthesis.cancel(); if (state === "speaking") setState("idle"); }
+
+/* =========================================================================
+   Voice in: Jarvis records you himself and Gemini writes down what you said. It stops by itself
+   when you stop talking (or tap again). iPhone's own speech recognition is unreliable in Home Screen apps.
+   ========================================================================= */
 let rec = null;
-function listen() {
-  if (!SR) { $("#input").focus(); setCaption("Voice isn't available here: use the keyboard's microphone key.", "status"); return; }
-  if (rec) { rec.stop(); return; }
-  speechSynthesis.cancel();
-  rec = new SR();
-  rec.lang = navigator.language?.startsWith("bg") ? "bg-BG" : "en-GB";
-  rec.interimResults = true; rec.continuous = false;
-  let final = "";
-  rec.onstart = () => { setOrb("listening"); setCaption("Listening…", "status"); };
-  rec.onresult = e => { let t = ""; for (const r of e.results) { t += r[0].transcript; if (r.isFinal) final = t; } setCaption(t, "you"); };
-  rec.onerror = e => { setCaption(e.error === "not-allowed" ? "Allow the microphone for Jarvis in Settings > Safari." : "Didn't catch that.", "status"); };
-  rec.onend = () => { rec = null; setOrb("idle"); const t = final.trim(); if (t) ask(t); };
-  rec.start();
+async function toggleListen() {
+  unlockSpeech();
+  if (rec) { rec.stopNow(); return; }
+  if (busy) { setCaption("Still working on your last question…", "status"); return; }
+  stopSpeaking();
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+  catch (_) { setState("error"); setCaption("Jarvis can't use the microphone. Allow it in iPhone Settings › Safari › Microphone, or type instead.", "error"); return; }
+  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m)) || "";
+  const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  mr.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const an = ac.createAnalyser(); an.fftSize = 1024;
+  ac.createMediaStreamSource(stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  let heard = false, loudAt = 0, noise = 0.01, frames = 0;
+  const t0 = performance.now();
+  let done = false;
+  const finish = () => {
+    if (done) return; done = true;
+    if (mr.state !== "inactive") mr.stop();
+    stream.getTracks().forEach(t => t.stop());                   // gives the speaker back (iPhone routes audio to the earpiece while recording)
+    ac.close().catch(() => {});
+    $("#micBtn").classList.remove("rec");
+  };
+  rec = { stopNow: finish };
+  mr.onstop = async () => {
+    rec = null;
+    if (!heard || !chunks.length) { setState("idle"); setCaption("I didn't hear anything, sir. Tap the orb and speak.", "status"); return; }
+    setState("compute"); setCaption("Writing down what you said…", "status");
+    try {
+      const text = await transcribe(new Blob(chunks, { type: mr.mimeType || mime || "audio/mp4" }));
+      if (!text) { setState("idle"); setCaption("I couldn't make that out, sir. Try again?", "status"); return; }
+      ask(text);
+    } catch (e) { setState("error"); setCaption("Couldn't understand the recording: " + e.message, "error"); }
+  };
+  const tick = () => {
+    if (done) return;
+    an.getFloatTimeDomainData(buf);
+    let sum = 0; for (const x of buf) sum += x * x;
+    const rms = Math.sqrt(sum / buf.length), t = performance.now() - t0;
+    if (++frames < 15) noise = Math.max(noise, rms * 1.6);           // learn the room's background noise
+    if (rms > Math.max(0.02, noise * 2)) { heard = true; loudAt = t; }
+    $("#orb").style.setProperty("--lvl", Math.min(1, rms * 12).toFixed(2));
+    if ((heard && t - loudAt > 1300) || (!heard && t > 7000) || t > 25000) return finish();
+    requestAnimationFrame(tick);
+  };
+  mr.start(250);
+  setState("listening"); setCaption("Listening…", "status");
+  $("#micBtn").classList.add("rec");
+  requestAnimationFrame(tick);
+}
+
+// turn the recording into 16 kHz mono WAV (a format Gemini always accepts), then ask Gemini to write it down
+async function toWav(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const audio = await ctx.decodeAudioData(await blob.arrayBuffer());
+  ctx.close().catch(() => {});
+  const rate = 16000, len = Math.ceil(audio.duration * rate);
+  const off = new OfflineAudioContext(1, len, rate);
+  const src = off.createBufferSource(); src.buffer = audio; src.connect(off.destination); src.start();
+  const pcm = (await off.startRendering()).getChannelData(0);
+  const out = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+  const w = (o, str) => [...str].forEach((c, i) => out.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); out.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt ");
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 1, true); out.setUint32(24, rate, true);
+  out.setUint32(28, rate * 2, true); out.setUint16(32, 2, true); out.setUint16(34, 16, true); w(36, "data"); out.setUint32(40, pcm.length * 2, true);
+  for (let i = 0; i < pcm.length; i++) out.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+  return out.buffer;
+}
+async function transcribe(blob) {
+  const wav = await toWav(blob);
+  const body = { contents: [{ role: "user", parts: [
+    { inline_data: { mime_type: "audio/wav", data: b64(wav) } },
+    { text: "Write down exactly what the speaker says, in the language they speak (usually English or Bulgarian). Reply with only their words. If there is no clear speech, reply with nothing." }] }],
+    generationConfig: { temperature: 0 } };
+  let j, last;
+  for (const m of ["gemini-flash-lite-latest", ...models()]) { try { j = await gemini(body, m); break; } catch (e) { last = e; } }
+  if (!j) throw last || new Error("no model answered");
+  return (j.candidates?.[0]?.content?.parts || []).map(p => p.text || "").join("").trim().replace(/^["“]|["”]$/g, "");
 }
 
 /* =========================================================================
    UI
    ========================================================================= */
-function setOrb(mode) { $("#orb").dataset.mode = mode; }
+let state = "idle", busy = false;
+const LABELS = { idle: "Ready", listening: "Listening", compute: "Thinking", speaking: "Speaking", error: "Something went wrong" };
+function setState(s) {
+  state = s;
+  $("#orb").dataset.mode = s;
+  const chip = $("#stateChip");
+  chip.dataset.state = s === "compute" ? "processing" : s;
+  chip.innerHTML = (s === "idle" ? '<span class="pulse-dot"></span>' : "") + `<span>${LABELS[s] || s}</span>`;
+  document.documentElement.dataset.mood = s === "idle" ? "" : s;
+}
 function setCaption(text, kind = "") { const c = $("#caption"); c.textContent = text; c.dataset.kind = kind; }
-function addMsg(role, text) {
-  const el = document.createElement("div");
-  el.className = "msg " + role;
-  el.innerHTML = `<span class="who">${role === "user" ? "You" : "Jarvis"}</span><p>${esc(text)}</p>`;
-  $("#thread").appendChild(el);
-  $("#thread").scrollTop = $("#thread").scrollHeight;
+function msgEl(m) {
+  const kind = m.role === "assistant" ? "assistant" : "user";
+  const a = document.createElement("article");
+  a.className = "msg " + kind;
+  a.innerHTML = `<div class="msg-head">${kind === "user" ? "" : '<span class="msg-mark" aria-hidden="true"></span>'}<strong>${kind === "user" ? "You" : "Jarvis"}</strong><time>${esc(m.t || "")}${m.src === "phone" ? " · phone" : ""}</time></div><div class="msg-body"></div>`;
+  a.querySelector(".msg-body").textContent = m.text;
+  return a;
 }
 function renderThread() {
-  $("#thread").innerHTML = "";
-  (S.state.history || []).slice(-30).forEach(m => addMsg(m.role, m.text));
+  const th = $("#thread"); th.innerHTML = "";
+  const items = (S.state.history || []).slice(-60);
+  if (!items.length) th.innerHTML = `<p class="secondary">No messages yet.</p>`;
+  items.forEach(m => th.appendChild(msgEl(m)));
+  requestAnimationFrame(() => { th.scrollTop = th.scrollHeight; });
 }
 function renderTasks() {
   const list = (S.state?.tasks || []).slice().sort((a, b) => a.due.localeCompare(b.due));
   const c = $("#taskCount"); c.textContent = list.length; c.hidden = !list.length;
   $("#taskList").innerHTML = list.length ? list.map(t => {
     const d = new Date(t.due);
-    return `<li><button class="tick" data-done="${esc(t.id)}" aria-label="Done: ${esc(t.message)}"></button><span><b>${esc(t.message)}</b><small>${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${hm(d)}${t.repeat && t.repeat !== "none" ? " · " + esc(t.repeat) : ""}</small></span></li>`;
+    return `<li><button class="p-tick" data-done="${esc(t.id)}" aria-label="Done: ${esc(t.message)}"></button><span><b>${esc(t.message)}</b><small>${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${hm(d)}${t.repeat && t.repeat !== "none" ? " · " + esc(t.repeat) : ""}</small></span></li>`;
   }).join("") : `<li class="empty">No tasks. Ask Jarvis or add one below.</li>`;
-  document.querySelectorAll("[data-done]").forEach(b => b.onclick = () => { b.classList.add("on"); setTimeout(() => completeTask(b.dataset.done), 250); });
+  $$("[data-done]").forEach(b => b.onclick = () => { b.classList.add("on"); setTimeout(() => completeTask(b.dataset.done), 250); });
 }
+function renderSpoken() {
+  const b = $("#spokenBtn");
+  b.setAttribute("aria-pressed", String(speakOn));
+  b.innerHTML = icon(speakOn ? "volume-2" : "volume-x") + `<span>${speakOn ? "Spoken replies on" : "Spoken replies off"}</span>`;
+  $("#mSpeak").checked = speakOn;
+}
+function setSpeak(on) { speakOn = on; localStorage.setItem("jarvis.speak", on ? "on" : "off"); if (!on) stopSpeaking(); renderSpoken(); }
 
-let busy = false;
 async function ask(text) {
-  text = text.trim();
-  if (!text || busy) return;
+  text = String(text || "").trim();
+  if (!text) return;
+  unlockSpeech();
+  if (busy) { setCaption("Still working on your last question…", "status"); return; }
   busy = true;
-  addMsg("user", text);
-  setOrb("processing"); setCaption("Thinking…", "status");
+  $("#sendBtn").disabled = true;
+  setState("compute"); setCaption(text, "you");
   const d = new Date(), stamp = { t: hm(d), d: ymd(d) };
-  let reply;
+  let reply, ok = true;
   try { reply = (await think(text)).reply; }
-  catch (e) { reply = `I couldn't reach my brain just now, sir: ${e.message}`; setOrb("error"); }
-  addMsg("assistant", reply);
-  setCaption(reply, "jarvis");
-  if (!reply.startsWith("I couldn't reach")) {
+  catch (e) { ok = false; reply = `I couldn't reach my brain, sir (${e.message}). Check the internet and try again.`; }
+  finally { busy = false; $("#sendBtn").disabled = false; }
+  setCaption(reply, ok ? "jarvis" : "error");
+  if (ok) {
     const ts = now();
     S.state.history = [...(S.state.history || []), { role: "user", text, ...stamp, ts, src: "phone" }, { role: "assistant", text: reply, ...stamp, ts: ts + 0.001, src: "phone" }].slice(-200);
     changed();
-  }
-  say(reply);
-  if ($("#orb").dataset.mode === "processing") setOrb("idle");
-  busy = false;
+    setState("idle"); say(reply);
+  } else setState("error");
 }
 
 // due tasks: announced while the app is open (iPhone web apps can't wake up by themselves)
@@ -410,12 +527,28 @@ function checkDue() {
     const due = new Date(r.due).getTime();
     if (due <= t && t - due < 15 * 60000 && !announced.has(r.id + r.due)) {
       announced.add(r.id + r.due);
-      addMsg("assistant", `Reminder: ${r.message}`); say(`Sir, a reminder: ${r.message}`);
+      setCaption(`Reminder: ${r.message}`, "jarvis"); say(`Sir, a reminder: ${r.message}`);
     }
   }
 }
 
-function sheet(id, open) { $(id).hidden = !open; }
+function openSheet(id) { $(id).hidden = false; }
+function closeSheets() { $$(".p-sheet").forEach(s => s.hidden = true); }
+
+// keep everything above the keyboard: size the app to the visible part of the screen
+function fitViewport() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty("--app-h", h + "px");
+  if (vv && vv.offsetTop) window.scrollTo(0, 0);
+}
+
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem("jarvis.theme", t);
+  $$("[data-theme-choice]").forEach(b => b.setAttribute("aria-checked", String(b.dataset.themeChoice === t)));
+  document.querySelector('meta[name="theme-color"]').content = t === "light" ? "#F4F3F0" : "#0B0B16";
+}
 
 /* =========================================================================
    Setup and start
@@ -441,14 +574,14 @@ async function connect(repo, token, pass) {
   const salt = unb64(env.salt), iter = env.iter;
   if (iter < 100000 || iter > 5000000) throw new Error("Unexpected sync format");
   const key = await deriveKey(pass, salt, iter);
-  let state;
-  try { state = await openEnv(JSON.stringify(env), "state.enc", key); }
+  let st;
+  try { st = await openEnv(JSON.stringify(env), "state.enc", key); }
   catch (_) { throw new Error("Wrong passphrase."); }
-  Object.assign(S, { key, salt, iter, state, base: JSON.parse(JSON.stringify(state)) });
+  Object.assign(S, { key, salt, iter, state: st, base: JSON.parse(JSON.stringify(st)) });
   S.shas["state.enc"] = j.sha;
   await kvSet("key", key); await kvSet("salt", salt); await kvSet("iter", iter);
   await localSeal("conn", { repo: S.repo, token: S.token });
-  await localSeal("state", state); await localSeal("base", S.base);
+  await localSeal("state", st); await localSeal("base", S.base);
 }
 
 async function start() {
@@ -466,11 +599,8 @@ async function start() {
 
 function showSetup(link) {
   $("#setup").hidden = false; $("#app").hidden = true;
-  const manual = !link;
-  $("#manualFields").hidden = !manual;
-  $("#sManual").hidden = true;
-  if (manual) $("#setupLead").textContent = "Scan the QR code in Jarvis on your PC (Settings > Phone), or enter the details by hand.";
-  $("#sManual").onclick = () => { $("#manualFields").hidden = false; $("#sManual").hidden = true; };
+  $("#manualFields").hidden = !!link;
+  if (!link) $("#setupLead").textContent = "Scan the QR code in Jarvis on your PC (Settings › Phone), or enter the details here.";
   $("#sGo").onclick = async () => {
     const b = $("#sGo"), err = $("#sErr"); err.textContent = "";
     const repo = link?.repo || $("#sRepo").value, token = link?.token || $("#sToken").value, pass = $("#sPass").value;
@@ -484,25 +614,43 @@ function showSetup(link) {
 
 function showApp() {
   $("#setup").hidden = true; $("#app").hidden = false;
-  renderThread(); renderTasks();
-  $("#mSpeak").checked = speakOn;
-  $("#mInfo").textContent = `Synced with ${S.repo}. Your PC: ${S.state.settings?.pc_name || "not seen yet"}.`;
+  renderTasks(); renderSpoken(); setState("idle");
+  const last = [...(S.state.history || [])].reverse().find(m => m.role === "assistant");
+  if (last) setCaption(last.text, "jarvis");
+  $("#mInfo").textContent = `${S.repo} · PC: ${S.state.settings?.pc_name || "not seen yet"}`;
+  $("#pcHint").textContent = S.state.settings?.pc_name ? `Linked to ${S.state.settings.pc_name}` : "";
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#composer").onsubmit = e => { e.preventDefault(); const v = $("#input").value; $("#input").value = ""; ask(v); };
-  $("#orb").onclick = listen; $("#micBtn").onclick = listen;
-  $("#tasksBtn").onclick = () => { renderTasks(); sheet("#tasksSheet", true); };
-  $("#menuBtn").onclick = () => sheet("#menuSheet", true);
-  document.querySelectorAll("[data-close]").forEach(b => b.onclick = () => b.closest(".sheet").hidden = true);
-  document.querySelectorAll(".sheet").forEach(s => s.onclick = e => { if (e.target === s) s.hidden = true; });
-  $("#taskAdd").onsubmit = e => { e.preventDefault(); const v = $("#taskText").value.trim(); if (!v) return; $("#taskText").value = ""; sheet("#tasksSheet", false); ask("Add a task: " + v); };
+  hydrateIcons();
+  setTheme(localStorage.getItem("jarvis.theme") || "light");
+  fitViewport();
+  window.visualViewport?.addEventListener("resize", fitViewport);
+  window.visualViewport?.addEventListener("scroll", fitViewport);
+  addEventListener("pointerdown", unlockSpeech, { capture: true });
+
+  const input = $("#input");
+  const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; };
+  input.addEventListener("input", grow);
+  input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } });
+  $("#composer").onsubmit = e => { e.preventDefault(); const v = input.value; input.value = ""; grow(); input.blur(); ask(v); };
+  $("#orb").onclick = toggleListen; $("#micBtn").onclick = toggleListen;
+  $$(".suggestion[data-ask]").forEach(b => b.onclick = () => ask(b.dataset.ask));
+  $("#spokenBtn").onclick = () => setSpeak(!speakOn);
+  $("#histBtn").onclick = () => { renderThread(); openSheet("#histSheet"); };
+  $("#tasksBtn").onclick = () => { renderTasks(); openSheet("#tasksSheet"); };
+  $("#menuBtn").onclick = () => { const v = bestVoice(); $("#mVoice").textContent = v ? v.name : "System voice"; openSheet("#menuSheet"); };
+  $$("[data-close]").forEach(b => b.onclick = closeSheets);
+  $$(".p-sheet").forEach(s => s.onclick = e => { if (e.target === s) closeSheets(); });
+  $("#taskAdd").onsubmit = e => { e.preventDefault(); const v = $("#taskText").value.trim(); if (!v) return; $("#taskText").value = ""; closeSheets(); ask("Add a task: " + v); };
   $("#mSync").onclick = () => sync();
-  $("#mSpeak").onchange = e => { speakOn = e.target.checked; localStorage.setItem("jarvis.speak", speakOn ? "on" : "off"); };
+  $("#mSpeak").onchange = e => setSpeak(e.target.checked);
+  $("#mVoiceTest").onclick = () => { const was = speakOn; speakOn = true; say("Good evening, sir. All systems are online."); speakOn = was; };
+  $$("[data-theme-choice]").forEach(b => b.onclick = () => setTheme(b.dataset.themeChoice));
   $("#mForget").onclick = async () => { if (!confirm("Disconnect this phone? Your data stays safe on the PC and in the encrypted sync.")) return; await kvClear(); localStorage.clear(); location.reload(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden && S.key && S.repo) sync(); });
   setInterval(() => { if (!document.hidden && S.key && S.repo) sync(); }, 60000);
   setInterval(() => { if (S.state) checkDue(); }, 30000);
-  speechSynthesis?.getVoices();
-  start().catch(e => { document.body.insertAdjacentHTML("beforeend", `<p class="err">Jarvis couldn't start: ${esc(e.message)}</p>`); });
+  if ("speechSynthesis" in window) { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => {}; }
+  start().catch(e => { setCaption("Jarvis couldn't start: " + e.message, "error"); });
 });

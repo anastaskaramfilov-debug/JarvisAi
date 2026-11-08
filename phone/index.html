@@ -1,84 +1,116 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://api.github.com https://generativelanguage.googleapis.com https://geocoding-api.open-meteo.com https://api.open-meteo.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src https://api.github.com https://generativelanguage.googleapis.com https://geocoding-api.open-meteo.com https://api.open-meteo.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#07070F">
+<meta name="theme-color" content="#F4F3F0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Jarvis">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="pc/tokens.css">
+<link rel="stylesheet" href="pc/app.css">
+<link rel="stylesheet" href="phone.css">
 <title>Jarvis</title>
 </head>
-<body>
-<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
+<body class="phone">
+<div class="backdrop" aria-hidden="true"><div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i></div></div>
 
 <!-- First start: connect this phone to your Jarvis -->
-<main class="screen" id="setup" hidden>
-  <div class="setup-card">
-    <div class="mini-orb" aria-hidden="true"></div>
+<main class="p-screen p-setup" id="setup" hidden>
+  <div class="settings-group p-setup-card">
+    <span class="brand-mark p-setup-mark" aria-hidden="true"></span>
     <h1>Connect your Jarvis</h1>
-    <p class="muted" id="setupLead">Type the passphrase you chose on your PC (Settings &gt; Phone). It never leaves this phone.</p>
+    <p class="secondary" id="setupLead">Type the passphrase you chose on your PC (Settings &gt; Phone). It never leaves this phone.</p>
     <div id="manualFields" hidden>
-      <label>Sync repo<input id="sRepo" placeholder="yourname/jarvis-sync" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <label>Sync key (token)<input id="sToken" type="password" placeholder="github_pat_…" autocomplete="off"></label>
+      <div class="field"><label for="sRepo">Sync repo</label><input class="input" id="sRepo" placeholder="yourname/jarvis-sync" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+      <div class="field"><label for="sToken">Token</label><input class="input" id="sToken" type="password" placeholder="github_pat_…" autocomplete="off"></div>
     </div>
-    <label>Passphrase<input id="sPass" type="password" autocomplete="current-password" placeholder="Your sync passphrase"></label>
-    <button class="btn primary" id="sGo" type="button">Connect</button>
-    <p class="err" id="sErr" role="alert"></p>
-    <button class="link" id="sManual" type="button">No QR code? Enter the details by hand</button>
+    <div class="field"><label for="sPass">Passphrase</label><input class="input" id="sPass" type="password" autocomplete="current-password" placeholder="Your sync passphrase"></div>
+    <button class="btn primary p-wide" id="sGo" type="button">Connect</button>
+    <p class="p-err" id="sErr" role="alert"></p>
   </div>
 </main>
 
 <!-- Jarvis -->
-<main class="screen" id="app" hidden>
-  <header class="top">
-    <span class="brand"><span class="dot-mark"></span>JARVIS</span>
-    <span class="status" id="syncStatus" title="Sync"><i class="sdot"></i><span>Syncing…</span></span>
-    <button class="icon" id="tasksBtn" type="button" aria-label="Tasks"><svg viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></svg><b id="taskCount" hidden></b></button>
-    <button class="icon" id="menuBtn" type="button" aria-label="Menu"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/></svg></button>
+<main class="p-screen" id="app" hidden>
+  <header class="p-top">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="wordmark">JARVIS</span></div>
+    <span class="p-sync" id="syncStatus"><i class="p-sdot"></i><span>Syncing…</span></span>
+    <button class="icon-btn" id="histBtn" type="button" aria-label="History"><i data-icon="message-square"></i></button>
+    <button class="icon-btn p-badge-host" id="tasksBtn" type="button" aria-label="Tasks"><i data-icon="list-checks"></i><b class="p-badge" id="taskCount" hidden></b></button>
+    <button class="icon-btn" id="menuBtn" type="button" aria-label="Menu"><i data-icon="settings"></i></button>
   </header>
 
-  <section class="stage">
-    <button class="orb" id="orb" type="button" aria-label="Talk to Jarvis" data-mode="idle">
-      <span class="glow"></span><span class="body"><i class="b1"></i><i class="b2"></i><i class="b3"></i></span><span class="sheen"></span>
+  <section class="p-stage">
+    <button class="orb" id="orb" type="button" data-mode="idle" aria-label="Talk to Jarvis">
+      <span class="orb-glow"></span>
+      <span class="orb-rings" aria-hidden="true"></span>
+      <span class="orb-breathe"><span class="orb-body"><span class="orb-tint">
+        <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+      </span><span class="orb-sheen"></span></span></span>
     </button>
-    <p class="caption" id="caption">Tap the orb and talk, or type below.</p>
+    <div class="state-row"><span class="state-chip" id="stateChip" role="status" aria-live="polite"></span></div>
+    <p class="context-line p-caption" id="caption">Tap the orb and talk, or type below.</p>
   </section>
 
-  <section class="thread" id="thread" aria-live="polite"></section>
-
-  <form class="composer" id="composer" autocomplete="off">
-    <input id="input" placeholder="Ask Jarvis…" enterkeyhint="send" autocomplete="off">
-    <button class="icon mic" id="micBtn" type="button" aria-label="Speak"><svg viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg></button>
-    <button class="icon send" type="submit" aria-label="Send"><svg viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></svg></button>
-  </form>
+  <div class="p-bottom">
+    <div class="suggestions p-sugs" role="group" aria-label="Suggestions">
+      <button class="suggestion" data-ask="Summarize my day: my tasks and the weather."><i data-icon="sparkle"></i><span>My day</span></button>
+      <button class="suggestion" data-ask="What's the weather like?"><i data-icon="cloud-sun"></i><span>Weather</span></button>
+      <button class="suggestion" data-ask="What are my tasks?"><i data-icon="list-checks"></i><span>Tasks</span></button>
+      <button class="suggestion" data-ask="Is the stock market open, and how are my watchlist stocks doing?"><i data-icon="line-chart"></i><span>Markets</span></button>
+      <button class="suggestion" data-ask="What's the latest news?"><i data-icon="globe"></i><span>News</span></button>
+    </div>
+    <form class="composer p-composer" id="composer" autocomplete="off">
+      <label for="input" class="sr-only">Message Jarvis</label>
+      <textarea id="input" rows="1" placeholder="Ask Jarvis anything…" enterkeyhint="send" autocomplete="off"></textarea>
+      <div class="composer-tools">
+        <button class="mic-btn" id="micBtn" type="button" aria-label="Talk to Jarvis"><i data-icon="mic"></i></button>
+        <button class="send-btn" id="sendBtn" type="submit" aria-label="Send"><i data-icon="arrow-up"></i></button>
+      </div>
+    </form>
+    <div class="composer-foot p-foot">
+      <button class="mode-toggle" id="spokenBtn" type="button" aria-pressed="true"></button>
+      <span class="grow"></span>
+      <span class="p-pc" id="pcHint"></span>
+    </div>
+  </div>
 </main>
 
-<!-- Tasks sheet -->
-<div class="sheet" id="tasksSheet" hidden>
-  <div class="sheet-card">
-    <div class="sheet-head"><strong>Tasks</strong><button class="icon" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-    <ul class="tasks" id="taskList"></ul>
-    <form class="task-add" id="taskAdd"><input id="taskText" placeholder="Add: call dad at 18:00" autocomplete="off"><button class="btn" type="submit">Add</button></form>
+<!-- History -->
+<div class="p-sheet" id="histSheet" hidden>
+  <div class="p-sheet-card">
+    <div class="p-sheet-head"><strong>History</strong><button class="icon-btn" data-close type="button" aria-label="Close"><i data-icon="x"></i></button></div>
+    <div class="thread p-thread" id="thread"></div>
   </div>
 </div>
 
-<!-- Menu sheet -->
-<div class="sheet" id="menuSheet" hidden>
-  <div class="sheet-card">
-    <div class="sheet-head"><strong>Jarvis</strong><button class="icon" data-close type="button" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
-    <div class="menu">
-      <button type="button" id="mSync">Sync now</button>
-      <label class="row">Spoken replies<input type="checkbox" id="mSpeak"></label>
-      <p class="muted small" id="mInfo"></p>
-      <button type="button" class="danger" id="mForget">Disconnect this phone</button>
-      <p class="muted small">Your conversations, profile and tasks are encrypted with your passphrase before they leave this phone. Jarvis on the PC can still be used from here when it's on.</p>
+<!-- Tasks -->
+<div class="p-sheet" id="tasksSheet" hidden>
+  <div class="p-sheet-card">
+    <div class="p-sheet-head"><strong>Tasks</strong><button class="icon-btn" data-close type="button" aria-label="Close"><i data-icon="x"></i></button></div>
+    <ul class="p-tasks" id="taskList"></ul>
+    <form class="p-task-add" id="taskAdd"><input class="input" id="taskText" placeholder="Add: call dad at 18:00" autocomplete="off"><button class="btn primary" type="submit">Add</button></form>
+  </div>
+</div>
+
+<!-- Menu -->
+<div class="p-sheet" id="menuSheet" hidden>
+  <div class="p-sheet-card">
+    <div class="p-sheet-head"><strong>Settings</strong><button class="icon-btn" data-close type="button" aria-label="Close"><i data-icon="x"></i></button></div>
+    <div class="p-menu">
+      <div class="setting-row"><div class="desc"><strong>Theme</strong></div>
+        <div class="seg" role="radiogroup" aria-label="Theme"><button type="button" role="radio" data-theme-choice="light">Light</button><button type="button" role="radio" data-theme-choice="dark">Dark</button></div></div>
+      <div class="setting-row"><label class="desc" for="mSpeak"><strong>Spoken replies</strong><span>Jarvis reads his answers aloud.</span></label><label class="switch"><input type="checkbox" id="mSpeak"><span class="sr-only">Spoken replies</span></label></div>
+      <div class="setting-row"><div class="desc"><strong>Voice</strong><span id="mVoice">—</span></div><button class="btn sm" type="button" id="mVoiceTest">Test</button></div>
+      <div class="setting-row"><div class="desc"><strong>Sync</strong><span id="mInfo"></span></div><button class="btn sm" type="button" id="mSync">Sync now</button></div>
+      <p class="secondary p-small">Your conversations, profile and tasks are encrypted with your passphrase before they leave this phone. Better voice: iPhone Settings › Accessibility › Spoken Content › Voices › English › download "Daniel (Enhanced)".</p>
+      <button class="btn ghost danger p-wide" type="button" id="mForget">Disconnect this phone</button>
     </div>
   </div>
 </div>

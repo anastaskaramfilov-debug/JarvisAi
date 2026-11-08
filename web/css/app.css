@@ -1373,3 +1373,23 @@ svg.icon.lg { width: var(--icon-lg); height: var(--icon-lg); }
 .native .app-header { user-select: none; }
 .native .native-hide { display: none !important; }
 .qr-wrap { display: flex; align-items: center; gap: 16px; margin: 6px 0 14px; } .qr-wrap img { border-radius: 12px; background: #fff; padding: 8px; } .qr-wrap .hint { max-width: 260px; }
+
+/* =====================================================================
+   Performance: live background blur only where it shows (top bar, composer, Home widgets, menus).
+   Pages full of panels (Settings, Customize, Tasks, Inbox, Markets) use a solid glass look instead:
+   dozens of live blurs on top of an animated background made switching pages slow.
+   ===================================================================== */
+:root { --panel-solid: rgba(22, 22, 38, 0.92); }
+:root[data-theme="light"] { --panel-solid: rgba(255, 255, 255, 0.86); }
+.settings-group, .conn-card, .skill-row, .card.glass, .empty-state.card, .mail-list.glass, .mail-read.glass,
+.suggestion, .conversation, .msg-extras .fcard {
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+}
+.settings-group, .conn-card, .card.glass, .empty-state.card, .mail-list.glass, .mail-read.glass, .conversation {
+  background: var(--panel-solid);
+}
+/* the moving background only moves on Home */
+body:has(#appBody:not([data-view="assistant"])) .aurora i { animation-play-state: paused; }
+/* only the newest messages slide in */
+.msg { animation: none; }
+.msg:nth-last-child(-n+2) { animation: msg-in var(--t-panel) var(--ease-out); }
