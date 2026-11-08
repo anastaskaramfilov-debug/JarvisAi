@@ -1,0 +1,66 @@
+name: Build Jarvis
+
+on:
+  push:
+    tags: ["v*"]          # a tag like v2.2.0 builds the installer and publishes it as a release
+  workflow_dispatch:      # or run it by hand from the Actions tab (test build, no release)
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.$env:GITHUB_RUN_NUMBER" }
+          Set-Content -Path version.txt -Value $v -NoNewline
+          Set-Content -Path repo.txt -Value $env:GITHUB_REPOSITORY -NoNewline
+          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-app.txt
+
+      - name: Check that Jarvis starts (imports only)
+        env:
+          JARVIS_DATA: ${{ runner.temp }}\jarvis-data
+        run: python -c "import jarvis_server, jarvis_connectors, webview, pystray; print('imports ok')"
+
+      - name: Build Jarvis.exe
+        run: pyinstaller packaging/jarvis.spec --noconfirm --clean
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DMyVersion=$env:VERSION" packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Jarvis-Setup-${{ env.VERSION }}
+          path: dist-installer/*.exe
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-installer/*.exe
+          name: Jarvis ${{ env.VERSION }}
+          body: |
+            Download **Jarvis-Setup-${{ env.VERSION }}.exe** below and run it.
+            Already installed? Jarvis downloads this update by himself and asks you to restart.

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060D">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png">
+<title>Jarvis</title>
+<link rel="stylesheet" href="/web/css/tokens.css">
+<style>
+  html, body { margin: 0; height: 100%; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); }
+  body { background: var(--backdrop); display: grid; place-items: center; padding: 24px; }
+  .card { width: min(360px, 100%); text-align: center; }
+  .mark { width: 96px; height: 96px; margin: 0 auto 28px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff 0 7%, #9C8BFF 32%, #4A5BFF 68%, #2B1C8F); box-shadow: 0 0 60px rgba(124,108,255,.6); animation: b 6s ease-in-out infinite; }
+  @keyframes b { 50% { transform: scale(1.05); } }
+  h1 { font-size: 13px; letter-spacing: .32em; font-weight: 600; margin: 0 0 6px; }
+  p { color: var(--text-muted); font-size: 14px; margin: 0 0 24px; }
+  input { width: 100%; box-sizing: border-box; height: 56px; border-radius: 18px; border: 1px solid var(--glass-border-strong); background: var(--glass); color: var(--text-primary); font-size: 26px; letter-spacing: .5em; text-align: center; outline: none; }
+  input:focus { border-color: rgba(139,123,255,.6); box-shadow: 0 0 0 4px rgba(139,123,255,.12); }
+  button { margin-top: 14px; width: 100%; height: 52px; border: 0; border-radius: 18px; background: linear-gradient(135deg, #8B7BFF, #4FA8FF); color: #fff; font-size: 16px; font-weight: 600; }
+  button:disabled { opacity: .5; }
+  .err { color: var(--error); font-size: 14px; min-height: 20px; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <form class="card" id="f">
+    <div class="mark" aria-hidden="true"></div>
+    <h1>JARVIS</h1>
+    <p>Enter your PIN to connect to your PC</p>
+    <label for="pin" style="position:absolute;left:-9999px">PIN</label>
+    <input id="pin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="10" autofocus>
+    <button id="go" type="submit">Unlock</button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+<script>
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  document.getElementById("f").onsubmit = async e => {
+    e.preventDefault();
+    const go = document.getElementById("go"), err = document.getElementById("err");
+    go.disabled = true; err.textContent = "";
+    try {
+      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+                                            body: JSON.stringify({ pin: document.getElementById("pin").value }) });
+      const j = await r.json().catch(() => ({}));
+      if (r.ok) { location.replace("/"); return; }
+      err.textContent = j.error || "Couldn't log in";
+    } catch (_) { err.textContent = "Can't reach Jarvis. Is your PC on?"; }
+    go.disabled = false;
+  };
+</script>
+</body>
+</html>

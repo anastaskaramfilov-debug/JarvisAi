@@ -1,0 +1,23 @@
+# Your personal data never goes on GitHub
+jarvis_config.json
+jarvis_config.tmp
+jarvis_reminders.json
+jarvis_memory.json
+jarvis_history.json
+jarvis_profile.json
+jarvis_connectors.json
+jarvis_connectors.tmp
+jarvis_knowledge_index.json
+jarvis_log.txt
+migrated_from.txt
+*.backup*.py
+# Python / build output
+venv/
+__pycache__/
+*.pyc
+build/
+dist/
+dist-installer/
+version.txt
+repo.txt
+.installed

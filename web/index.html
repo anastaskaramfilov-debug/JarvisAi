@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#F4F3F0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/web/icons/apple-touch-icon.png">
+<meta name="color-scheme" content="dark">
+<title>Jarvis</title>
+<link rel="icon" href="/favicon.ico">
+<script>
+  // Apply the saved theme before anything is drawn, so there's no flash
+  try { var t = localStorage.getItem("jarvis.theme.v2") ? (localStorage.getItem("jarvis.theme") || "light") : "light";
+        if (t === "auto") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme = t; } catch (e) { document.documentElement.dataset.theme = "dark"; }
+</script>
+<link rel="stylesheet" href="/web/css/tokens.css">
+<link rel="stylesheet" href="/web/css/app.css">
+<script type="module" src="/web/js/main.js"></script>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true">
+  <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i></div>
+  <canvas id="weatherFx"></canvas>
+  <div class="grain"></div>
+</div>
+<div class="update-bar glass" id="updateBar" role="status" hidden>
+  <span class="live-dot ok pulse" aria-hidden="true"></span><span id="updateText">Jarvis was updated.</span>
+  <button class="btn primary sm" id="updateBtn" type="button">Restart now</button>
+  <button class="icon-btn sm" id="updateClose" type="button" aria-label="Later"><i data-icon="x"></i></button>
+</div>
+<div class="shell">
+
+  <!-- ===================== Header ===================== -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="wordmark">JARVIS</span>
+    </div>
+    <button class="provider tooltip" id="providerBtn" type="button" aria-label="AI provider status">
+      <span class="status-dot pending" aria-hidden="true"></span><strong>AI</strong><span>Checking…</span>
+    </button>
+    <div class="header-spacer"></div>
+    <div class="header-actions">
+      <button class="icon-btn tooltip panel-toggle" id="panelToggle" type="button" aria-label="Show conversation" aria-controls="conversation" aria-expanded="false" data-tip="Conversation"><i data-icon="panel"></i></button>
+      <span class="wmenu-wrap">
+        <button class="icon-btn tooltip" id="widgetsBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Choose home screen widgets" data-tip="Widgets"><i data-icon="layout"></i></button>
+        <div class="wmenu glass" id="widgetsMenu" role="menu" hidden>
+          <p class="wmenu-title">Home screen widgets</p>
+          <label><input type="checkbox" data-wtoggle="today"><span>Clock and next up</span></label>
+          <label><input type="checkbox" data-wtoggle="weather"><span>Weather</span></label>
+          <label><input type="checkbox" data-wtoggle="tasks"><span>Tasks</span></label>
+          <label><input type="checkbox" data-wtoggle="markets"><span>Markets</span></label>
+          <label><input type="checkbox" data-wtoggle="inbox"><span>Inbox</span></label>
+          <label><input type="checkbox" data-wtoggle="history"><span>Last conversation</span></label>
+        </div>
+      </span>
+      <button class="icon-btn tooltip" id="miniBtn" type="button" aria-label="Mini mode: small Jarvis on top of other apps" aria-pressed="false" data-tip="Mini mode" hidden><i data-icon="pip"></i></button>
+      <button class="icon-btn tooltip" id="themeBtn" type="button" aria-label="Switch theme" data-tip="Theme"></button>
+      <button class="icon-btn tooltip" id="settingsBtn" type="button" aria-label="Settings" data-tip="Settings"><i data-icon="settings"></i></button>
+    </div>
+  </header>
+
+  <div class="body" id="appBody" data-view="assistant">
+
+    <!-- ===================== Navigation rail ===================== -->
+    <aside class="sidebar" aria-label="Navigation">
+      <nav class="nav" aria-label="Main">
+        <button class="nav-item" data-view="assistant" aria-current="page"><i data-icon="assistant" class="md"></i><span class="nav-label">Home</span></button>
+        <button class="nav-item" data-view="conversation"><i data-icon="message-square" class="md"></i><span class="nav-label">History</span><span class="count" id="navCountConv" hidden></span></button>
+        <button class="nav-item" data-view="tasks"><i data-icon="list-checks" class="md"></i><span class="nav-label">Tasks</span><span class="count" id="navCountTasks" hidden></span></button>
+        <button class="nav-item" data-view="inbox"><i data-icon="inbox" class="md"></i><span class="nav-label">Inbox</span><span class="count" id="navCountInbox" hidden></span></button>
+        <button class="nav-item" data-view="markets"><i data-icon="line-chart" class="md"></i><span class="nav-label">Markets</span></button>
+        <button class="nav-item" data-view="customize"><i data-icon="palette" class="md"></i><span class="nav-label">Customize</span></button>
+      </nav>
+      <nav class="nav nav-bottom" aria-label="Settings">
+        <button class="nav-item" data-view="settings"><i data-icon="settings" class="md"></i><span class="nav-label">Settings</span></button>
+      </nav>
+    </aside>
+
+    <!-- ===================== Main ===================== -->
+    <main class="main" id="main">
+
+      <!-- Assistant -->
+      <section class="view active" id="view-assistant" aria-label="Assistant">
+        <div class="stage" id="hero">
+
+          <div class="w-col w-left">
+            <aside class="widget widget-cal glass" data-widget="today" aria-labelledby="greeting">
+              <div class="w-head"><span id="greeting">Hello</span><span id="clockDate"></span></div>
+              <div class="w-time num" id="clockTime">--:--</div>
+              <div class="w-block">
+                <span class="w-label">Next</span>
+                <div id="ctxNext"><span class="w-note">Loading…</span></div>
+              </div>
+            </aside>
+
+            <aside class="widget glass" data-widget="weather" aria-labelledby="wWeatherT">
+              <div class="w-head"><span class="w-title"><span class="live-dot" id="weatherLive" aria-hidden="true"></span><span id="wWeatherT">Weather</span></span>
+                <span class="w-actions"><button class="w-exp icon-btn sm" type="button" aria-expanded="false" aria-label="Show forecast"><i data-icon="chevron-down"></i></button></span></div>
+              <div class="w-body" id="ctxWeather"><span class="w-note">Loading weather…</span></div>
+            </aside>
+
+            <aside class="widget glass" data-widget="tasks" aria-labelledby="wTasksT">
+              <div class="w-head"><span class="w-title"><span class="live-dot" id="tasksLive" aria-hidden="true"></span><span id="wTasksT">Tasks</span></span>
+                <span class="w-actions"><button class="w-link" data-goto="tasks" type="button">All</button><button class="w-exp icon-btn sm" type="button" aria-expanded="false" aria-label="Show more tasks"><i data-icon="chevron-down"></i></button></span></div>
+              <ul class="w-list" id="wTasks"><li class="w-note">Loading…</li></ul>
+              <form class="w-quick" id="wTaskAdd" autocomplete="off">
+                <input class="input sm" id="wTaskInput" placeholder="Add: call dad at 18:00" aria-label="Add a task with a time">
+                <button class="icon-btn sm" type="submit" aria-label="Add task"><i data-icon="plus"></i></button>
+              </form>
+              <p class="w-err" id="wTaskErr" role="alert"></p>
+            </aside>
+          </div>
+
+          <div class="core-area">
+            <button class="orb" id="orb" type="button" data-mode="idle" aria-label="Talk to Jarvis">
+              <span class="orb-glow"></span>
+              <span class="orb-rings" aria-hidden="true"></span>
+              <canvas class="orb-wave" aria-hidden="true"></canvas>
+              <span class="orb-breathe">
+                <span class="orb-body">
+                  <span class="orb-tint">
+                    <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+                  </span>
+                  <span class="orb-sheen"></span>
+                </span>
+              </span>
+            </button>
+            <div class="state-row">
+              <span class="state-chip" data-state-label role="status" aria-live="polite"></span>
+              <button class="btn sm" data-act="stop-speaking" hidden><i data-icon="stop"></i><span>Stop speaking</span></button>
+              <button class="btn sm" data-act="stop-listening" hidden><i data-icon="mic-off"></i><span>Stop listening</span></button>
+              <button class="btn sm primary" data-act="error-action" hidden><i data-icon="refresh"></i><span>Try again</span></button>
+            </div>
+            <p class="context-line" id="contextLine">Ask anything, or click the orb to talk.</p>
+            <div class="live-cards" id="liveCards" hidden></div>
+          </div>
+
+<div class="w-col w-right">
+            <aside class="widget widget-mkt glass" data-widget="markets" aria-labelledby="mktWT">
+              <div class="w-head"><span class="w-title"><span class="live-dot" id="mktLive" aria-hidden="true"></span><span id="mktWT">Markets</span></span>
+                <span class="w-actions"><button class="icon-btn sm" id="mktAddBtn" type="button" aria-label="Add a ticker" data-tip="Add ticker"><i data-icon="plus"></i></button><button class="w-exp icon-btn sm" type="button" aria-expanded="false" aria-label="Show details"><i data-icon="chevron-down"></i></button></span></div>
+              <form class="w-quick" id="mktAdd" autocomplete="off" hidden>
+                <input class="input sm" id="mktAddInput" placeholder="Ticker, e.g. NVDA" aria-label="Ticker to add" maxlength="12">
+                <button class="icon-btn sm" type="submit" aria-label="Add"><i data-icon="check"></i></button>
+              </form>
+              <div class="w-ticks" id="mktWidget"><span class="w-note">Loading quotes…</span></div>
+              <div class="w-foot" id="mktWidgetNote"></div>
+            </aside>
+
+            <aside class="widget glass" data-widget="inbox" aria-labelledby="wInboxT">
+              <div class="w-head"><span class="w-title"><span class="live-dot" id="inboxLive" aria-hidden="true"></span><span id="wInboxT">Inbox</span></span>
+                <span class="w-actions"><button class="w-link" data-goto="inbox" type="button">Open</button><button class="w-exp icon-btn sm" type="button" aria-expanded="false" aria-label="Show more emails"><i data-icon="chevron-down"></i></button></span></div>
+              <div class="w-body" id="wInbox"><span class="w-note">Loading…</span></div>
+            </aside>
+
+            <aside class="widget glass" data-widget="history" aria-labelledby="wHistT">
+              <div class="w-head"><span class="w-title"><span class="live-dot" id="histLive" aria-hidden="true"></span><span id="wHistT">Last conversation</span></span>
+                <span class="w-actions"><button class="w-link" data-goto="conversation" type="button">History</button></span></div>
+              <div class="w-body" id="wHist"><span class="w-note">Loading…</span></div>
+            </aside>
+          </div>
+        </div>
+
+        <section class="viewer" id="viewer" aria-label="Pictures" hidden>
+          <header class="viewer-head">
+            <div class="grow"><strong id="viewerTitle"></strong><small id="viewerCaption"></small></div>
+            <span class="viewer-count num" id="viewerCount"></span>
+            <a class="icon-btn tooltip" id="viewerOpen" target="_blank" rel="noopener" data-tip="Open full size" aria-label="Open full size"><i data-icon="external"></i></a>
+            <a class="icon-btn tooltip" id="viewerSource" target="_blank" rel="noopener" data-tip="Open the website" aria-label="Open the website it came from"><i data-icon="link"></i></a>
+            <button class="icon-btn tooltip" id="viewerClose" type="button" data-tip="Close (Esc)" aria-label="Close pictures"><i data-icon="x"></i></button>
+          </header>
+          <div class="viewer-main">
+            <button class="viewer-nav prev" id="viewerPrev" type="button" aria-label="Previous picture"><i data-icon="chevron-left"></i></button>
+            <img id="viewerImg" alt="">
+            <div class="viewer-chart" id="viewerChart" hidden></div>
+            <div class="viewer-fail" id="viewerFail" hidden>This picture couldn't be loaded.</div>
+            <button class="viewer-nav next" id="viewerNext" type="button" aria-label="Next picture"><i data-icon="chevron-right"></i></button>
+          </div>
+          <div class="viewer-strip" id="viewerStrip" role="listbox" aria-label="All pictures"></div>
+        </section>
+
+        <div class="dock">
+          <div class="suggestions" role="group" aria-label="Suggested actions">
+            <button class="suggestion" data-ask="Summarize my day: my tasks, the weather and any new email."><i data-icon="sparkle"></i><span>Summarize my day</span></button>
+            <button class="suggestion" data-ask="What's on my schedule?"><i data-icon="list-checks"></i><span>Upcoming tasks</span><small id="sugTasks"></small></button>
+            <button class="suggestion" data-ask="Read me my new email."><i data-icon="inbox"></i><span>Read my inbox</span><small id="sugInbox"></small></button>
+            <button class="suggestion" data-goto="markets"><i data-icon="line-chart"></i><span>Market watch</span><small id="sugMarkets"></small></button>
+          </div>
+          <div class="composer">
+            <label for="composerInput" class="sr-only">Message Jarvis</label>
+            <textarea id="composerInput" rows="1" placeholder="Ask Jarvis anything…" autocomplete="off"></textarea>
+            <div class="composer-tools">
+              <button class="mic-btn tooltip tip-up" id="micBtn" type="button" aria-pressed="false" aria-label="Talk to Jarvis" data-tip="Talk (Ctrl+Space)"><i data-icon="mic"></i></button>
+              <button class="send-btn tooltip tip-up" id="sendBtn" type="button" aria-label="Send message" data-tip="Send (Enter)" disabled><i data-icon="arrow-up"></i></button>
+            </div>
+          </div>
+          <div class="composer-foot">
+            <button class="mode-toggle" id="spokenBtn" type="button" aria-pressed="true"></button>
+            <button class="mode-toggle" id="handsFreeBtn" type="button" aria-pressed="false" title='Listen continuously for "Jarvis"'></button>
+            <span class="grow"></span>
+            <span class="shortcut-hints" aria-hidden="true"><span><span class="kbd">Enter</span> send</span><span><span class="kbd">Shift</span>+<span class="kbd">Enter</span> new line</span><span><span class="kbd">Ctrl</span>+<span class="kbd">Space</span> talk</span></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tasks -->
+      <section class="view" id="view-tasks" aria-labelledby="tasksT">
+        <div class="view-header">
+          <h1 id="tasksT">Tasks</h1><span class="meta" id="tasksMeta"></span>
+          <div class="actions"><button class="btn ghost sm" id="tasksRefresh"><i data-icon="refresh"></i><span>Refresh</span></button></div>
+        </div>
+        <div class="view-body page-split">
+          <div class="page-main" id="tasksList"></div>
+          <aside class="page-side">
+            <div class="card glass">
+              <h3 class="card-title">Quick add</h3>
+              <form class="w-quick big" id="taskQuick" autocomplete="off">
+                <input class="input" id="taskQuickInput" placeholder="call dad at 18:00" aria-label="Task with a time">
+                <button class="btn primary" type="submit"><i data-icon="plus"></i><span>Add</span></button>
+              </form>
+              <p class="hint">Write the time in plain words: "at 18:00", "in 20 min", "tomorrow 9:00".</p>
+              <p class="form-error" id="taskQuickErr" role="alert"></p>
+            </div>
+            <div class="card glass">
+              <h3 class="card-title">Repeating or exact date</h3>
+              <form class="stack-form" id="taskForm" novalidate>
+                <div class="field"><label for="taskText">Task</label><input class="input" id="taskText" placeholder="e.g. Study for the exam" maxlength="200"></div>
+                <div class="field-row">
+                  <div class="field"><label for="taskDate">Date</label><input class="input" id="taskDate" type="date"></div>
+                  <div class="field"><label for="taskTime">Time</label><input class="input" id="taskTime" type="time"></div>
+                </div>
+                <div class="field"><label for="taskRepeat">Repeat</label><select class="select" id="taskRepeat"><option value="none">Once</option><option value="daily">Every day</option><option value="weekdays">Weekdays</option><option value="weekly">Every week</option></select></div>
+                <button class="btn" id="taskAdd" type="submit"><i data-icon="plus"></i><span>Add task</span></button>
+                <p class="form-error" id="taskError" role="alert"></p>
+              </form>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Inbox -->
+      <section class="view" id="view-inbox" aria-labelledby="inboxT">
+        <div class="view-header">
+          <h1 id="inboxT">Inbox</h1><span class="meta" id="inboxMeta"></span>
+          <div class="actions">
+            <div class="filter-group" role="group" aria-label="Show"><button class="mode-toggle" data-inbox-filter="unread" aria-pressed="true">Unread</button><button class="mode-toggle" data-inbox-filter="all" aria-pressed="false">Latest</button></div>
+            <button class="btn sm" id="inboxClean"><i data-icon="sparkle"></i><span>Clean up</span></button>
+            <button class="btn ghost sm" id="inboxRefresh"><i data-icon="refresh"></i><span>Refresh</span></button>
+          </div>
+        </div>
+        <div class="view-body mail-split" id="inboxBody">
+          <div class="mail-list glass" id="inboxList"></div>
+          <article class="mail-read glass" id="inboxRead" aria-live="polite"><div class="empty-state"><h3>Select an email</h3><p>Its text appears here, with buttons to archive it, mark it read, or have Jarvis draft a reply.</p></div></article>
+        </div>
+      </section>
+
+      <!-- Market Watch -->
+      <section class="view" id="view-markets" aria-labelledby="mktT">
+        <div class="view-header">
+          <h1 id="mktT">Market Watch</h1><span class="meta" id="marketsMeta"></span>
+          <div class="actions">
+            <form class="w-quick" id="watchAdd" autocomplete="off"><input class="input sm" id="watchAddInput" placeholder="Add ticker, e.g. NVDA" maxlength="12" aria-label="Ticker to add"><button class="btn sm" type="submit"><i data-icon="plus"></i><span>Add</span></button></form>
+            <button class="btn ghost sm" id="marketsRefresh"><i data-icon="refresh"></i><span>Refresh</span></button>
+          </div>
+        </div>
+        <div class="view-body">
+          <p class="market-state" id="marketState"></p>
+          <div class="mkt-grid" id="marketsBody"></div>
+          <p class="data-note">Quotes come from Yahoo Finance and can be delayed up to 15 minutes. Up to 8 tickers. Not investment advice.</p>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section class="view" id="view-customize" aria-labelledby="custT">
+        <div class="view-header"><h1 id="custT">Customize</h1><span class="meta">Make Jarvis yours. Everything here applies right away.</span></div>
+        <div class="customize">
+            <div class="settings-group">
+              <h3>Look</h3>
+              <div class="setting-row">
+                <div class="desc"><strong>Theme</strong><span>Dark glass, bright glass, or follow your Windows setting. The sun and moon button at the top switches quickly.</span></div>
+                <div class="seg" role="radiogroup" aria-label="Theme">
+                  <button type="button" role="radio" data-theme-choice="dark" aria-checked="true"><i data-icon="moon"></i><span>Dark</span></button>
+                  <button type="button" role="radio" data-theme-choice="light" aria-checked="false"><i data-icon="sun"></i><span>Light</span></button>
+                  <button type="button" role="radio" data-theme-choice="auto" aria-checked="false"><i data-icon="monitor"></i><span>Windows</span></button>
+                </div>
+              </div>
+              <div class="setting-row">
+                <div class="desc"><strong>Orb style</strong><span>How Jarvis's core looks. It also reacts: a bounce when something worked, a wobble when he asks you something, a shake when something failed, and a beat while music plays.</span></div>
+                <div class="skin-pick" role="radiogroup" aria-label="Orb style">
+                  <button type="button" role="radio" data-skin-choice="auto" aria-checked="true"><span class="sk sk-auto"></span><span>Classic</span></button>
+                  <button type="button" role="radio" data-skin-choice="arc" aria-checked="false"><span class="sk sk-arc"></span><span>Arc reactor</span></button>
+                  <button type="button" role="radio" data-skin-choice="galaxy" aria-checked="false"><span class="sk sk-galaxy"></span><span>Galaxy</span></button>
+                  <button type="button" role="radio" data-skin-choice="liquid" aria-checked="false"><span class="sk sk-liquid"></span><span>Liquid metal</span></button>
+                </div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h3>Home screen</h3>
+              <div class="setting-row cust-widgets">
+                <div class="desc"><strong>Widgets</strong><span>What shows around the orb. Same as the grid button at the top.</span></div>
+                <div class="chip-toggles">
+                  <label><input type="checkbox" data-wtoggle="today"><span>Clock</span></label>
+                  <label><input type="checkbox" data-wtoggle="weather"><span>Weather</span></label>
+                  <label><input type="checkbox" data-wtoggle="tasks"><span>Tasks</span></label>
+                  <label><input type="checkbox" data-wtoggle="markets"><span>Markets</span></label>
+                  <label><input type="checkbox" data-wtoggle="inbox"><span>Inbox</span></label>
+                  <label><input type="checkbox" data-wtoggle="history"><span>Last chat</span></label>
+                </div>
+              </div>
+              <div class="setting-row">
+                <label class="desc" for="setIdle"><strong>Idle screen</strong><span>When Jarvis is left alone, he turns into an ambient display: clock, weather, your next event and task, and what's playing. Move the mouse or say "Jarvis" to wake him.</span></label>
+                <span class="row-btns"><select class="select sm" id="setIdleMin" aria-label="Show after"><option value="1">after 1 min</option><option value="3">after 3 min</option><option value="5">after 5 min</option><option value="10">after 10 min</option></select>
+                <button class="btn sm" id="idlePreview" type="button">Preview</button>
+                <label class="switch"><input type="checkbox" id="setIdle"><span class="sr-only">Idle screen</span></label></span>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h3>How he sounds</h3>
+              <div class="field"><label for="setVoice">Voice</label>
+                <select class="select" id="setVoice">
+                  <optgroup label="Jarvis-style (British)">
+                    <option value="en-GB-RyanNeural">Ryan, British (default)</option>
+                    <option value="bond">Bond, British, smooth and low</option>
+                    <option value="en-GB-ThomasNeural">Thomas, British</option>
+                  </optgroup>
+                  <optgroup label="Deep and calm">
+                    <option value="en-IE-ConnorNeural">Connor, Irish</option>
+                    <option value="en-AU-WilliamNeural">William, Australian</option>
+                    <option value="en-US-ChristopherNeural">Christopher, American</option>
+                    <option value="en-US-EricNeural">Eric, American</option>
+                    <option value="en-US-RogerNeural">Roger, American</option>
+                    <option value="en-US-AndrewNeural">Andrew, American</option>
+                    <option value="en-US-GuyNeural">Guy, American</option>
+                  </optgroup>
+                  <optgroup label="English + Bulgarian (same voice)">
+                    <option value="en-US-AndrewMultilingualNeural">Andrew Multilingual</option>
+                    <option value="en-US-BrianMultilingualNeural">Brian Multilingual</option>
+                    <option value="en-US-AvaMultilingualNeural">Ava Multilingual</option>
+                    <option value="en-US-EmmaMultilingualNeural">Emma Multilingual</option>
+                  </optgroup>
+                  <optgroup label="Bulgarian">
+                    <option value="bg-BG-BorislavNeural">Borislav, Bulgarian</option>
+                    <option value="bg-BG-KalinaNeural">Kalina, Bulgarian</option>
+                  </optgroup>
+                  <optgroup label="Female">
+                    <option value="en-GB-SoniaNeural">Sonia, British</option>
+                    <option value="en-US-AriaNeural">Aria, American</option>
+                  </optgroup>
+                  <option value="browser">Offline voice (lower quality)</option>
+                </select>
+                <span class="hint">Changes save by themselves. Natural voices need the internet; without it Jarvis uses the offline voice.</span>
+              </div>
+              <button class="btn" id="testVoice" type="button"><i data-icon="volume-2"></i><span>Play sample</span></button>
+            </div>
+            <div class="settings-group">
+              <h3>How he hears you</h3>
+              <div class="field-row">
+                <div class="field"><label for="setMic">Microphone</label><select class="select" id="setMic"></select><span class="hint" id="micListNote"></span></div>
+                <div class="field"><label for="setStt">Speech recognition</label>
+                  <select class="select" id="setStt"><option value="base.en">Fast</option><option value="small.en">Balanced</option><option value="medium.en">Most accurate, slower</option></select>
+                </div>
+              </div>
+              <div class="field">
+                <span class="label">Microphone test</span>
+                <div class="meter-live" id="micMeter" aria-hidden="true"><i></i></div>
+                <span class="hint" id="micTestResult" aria-live="polite">Saves your choice, then records one sentence and shows what Jarvis heard.</span>
+              </div>
+              <button class="btn" id="testMic" type="button"><i data-icon="mic"></i><span>Test microphone</span></button>
+            </div>
+            <div class="settings-group">
+              <h3>Sounds</h3>
+              <div class="setting-row">
+                <label class="desc" for="setSfx"><strong>Interface sounds</strong><span>Soft tones when listening starts and stops, when an answer arrives and when a reminder fires.</span></label>
+                <label class="switch"><input type="checkbox" id="setSfx"><span class="sr-only">Interface sounds</span></label>
+              </div>
+            </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings" aria-labelledby="setT">
+        <div class="view-header"><h1 id="setT">Settings</h1></div>
+        <div class="settings">
+          <div class="settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+            <button role="tab" data-page="general" aria-controls="set-general">General</button>
+            <button role="tab" data-page="apps" aria-controls="set-ai">Apps &amp; accounts</button>
+            <button role="tab" data-page="skills" aria-controls="set-skills">Skills</button>
+            <button role="tab" data-page="memory" aria-controls="set-memory">About you</button>
+            <button role="tab" data-page="phone" aria-controls="set-phone" class="pc-only">Phone</button>
+            <button role="tab" data-page="help" aria-controls="set-about">Help</button>
+          </div>
+
+          <div class="settings-page" id="set-general" role="tabpanel">
+            <h2>General</h2><p class="lead">How Jarvis behaves on this PC.</p>
+            <div class="settings-group pc-only" id="installGroup">
+              <h3>App window</h3>
+              <div class="setting-row">
+                <div class="desc"><strong>Install Jarvis as an app</strong><span id="installDesc">Removes the grey title bar: Jarvis's own top bar takes its place, with the minimise, maximise and close buttons in the corner. Ctrl+Alt+J then opens the app.</span></div>
+                <button class="btn primary" id="installBtn" type="button"><i data-icon="monitor"></i><span>Install</span></button>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h3>Jarvis speaks up</h3>
+              <div class="setting-row">
+                <label class="desc" for="setBriefing"><strong>Morning briefing</strong><span>The first time you open Jarvis each day before 12:00: weather, calendar, tasks, email and markets.</span></label>
+                <label class="switch"><input type="checkbox" id="setBriefing"><span class="sr-only">Morning briefing</span></label>
+              </div>
+              <div class="setting-row">
+                <label class="desc" for="setMailAlerts"><strong>Important emails</strong><span>Checks for new email every 2 minutes. Gemini picks the urgent or personal ones and Jarvis says them out loud. Newsletters and shops stay quiet.</span></label>
+                <label class="switch"><input type="checkbox" id="setMailAlerts"><span class="sr-only">Important emails</span></label>
+              </div>
+              <div class="setting-row">
+                <label class="desc" for="setMarketAlerts"><strong>Market open</strong><span>Weekdays: "New York opens in 5 minutes" with pre-market moves at 16:25, and your watchlist's 15-minute opening range at 16:45 (Sofia time). US holidays aren't checked.</span></label>
+                <label class="switch"><input type="checkbox" id="setMarketAlerts"><span class="sr-only">Market open</span></label>
+              </div>
+            </div>
+            <div class="settings-group pc-only">
+              <h3>Jarvis server</h3>
+              <div class="setting-row">
+                <div class="desc"><strong>Turn off Jarvis</strong><span>Stops the server. Reminders won't fire until you open Jarvis again from the desktop icon or with Ctrl+Alt+J.</span></div>
+                <button class="btn danger" id="turnOff" type="button"><i data-icon="power"></i><span>Turn off</span></button>
+              </div>
+            </div>
+            <div class="settings-actions"><button class="btn primary" data-save>Save changes</button><span class="saved" aria-live="polite"></span></div>
+          </div>
+
+          <div class="settings-page" id="set-ai" role="tabpanel">
+            <h2>Apps &amp; accounts</h2><p class="lead">The AI brain, your email and calendar, and the apps Jarvis can use.</p>
+            <h2 class="sub-h2">AI provider</h2><p class="lead">The model that understands you and decides which tools to use. Keys are saved only on this PC and are never shown here.</p>
+            <div class="conn" role="status">
+              <span class="status-dot" id="connDot" aria-hidden="true"></span>
+              <span class="grow"><strong id="connName">Gemini</strong><small id="connLine">Checking…</small></span>
+              <button class="btn sm" id="checkConn" type="button"><i data-icon="refresh"></i><span>Check connection</span></button>
+            </div>
+            <div class="settings-group">
+              <div class="field"><label for="setBrain">Provider</label>
+                <select class="select" id="setBrain"><option value="gemini">Gemini (Google), free tier</option><option value="claude">Claude (Anthropic), paid, falls back to Gemini</option></select>
+              </div>
+              <div class="field"><label for="setGKey">Gemini API key</label><input class="input" id="setGKey" type="password" autocomplete="off" placeholder="Paste a new key to replace the saved one"><span class="hint" id="gKeyState"></span>
+                <span class="hint">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>.</span></div>
+              <div class="setting-row">
+                <label class="desc" for="setFast"><strong>Fast replies</strong><span>Quick questions go to Gemini Flash-Lite, which answers noticeably faster. Harder questions still use the full model.</span></label>
+                <label class="switch"><input type="checkbox" id="setFast"><span class="sr-only">Fast replies</span></label>
+              </div>
+              <div class="field"><label for="setGModel">Gemini model</label><input class="input" id="setGModel" placeholder="gemini-flash-latest" autocomplete="off">
+                <span class="hint">gemini-flash-latest is recommended. When it is busy, Jarvis falls back to other Gemini models automatically.</span></div>
+              <div id="claudeFields">
+                <div class="field"><label for="setCKey">Claude API key</label><input class="input" id="setCKey" type="password" autocomplete="off" placeholder="Paste a new key to replace the saved one"><span class="hint" id="cKeyState"></span>
+                  <span class="hint">Create a key and set a monthly spending limit at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.</span></div>
+                <div class="field"><label for="setCModel">Claude model</label>
+                  <select class="select" id="setCModel"><option value="claude-haiku-5-5">Haiku 5.5, fastest</option><option value="claude-sonnet-5-5">Sonnet 5.5, recommended</option><option value="claude-opus-5-5">Opus 5.5, most capable</option></select></div>
+              </div>
+            </div>
+            <h2 class="sub-h2">Integrations</h2><p class="lead">Weather, email and market data.</p>
+            <div class="settings-group">
+              <h3>Weather</h3>
+              <div class="field"><label for="setCity">City</label><input class="input" id="setCity" autocomplete="off"><span class="hint">Forecasts come from Open-Meteo. No account needed.</span></div>
+            </div>
+            <div class="settings-group">
+              <h3>Gmail</h3>
+              <p class="secondary" style="margin-bottom:12px">Jarvis can read, search, send and reply to email. Every email he writes is shown to you first and only goes out when you click Send. He can't delete mail or mark it as read.</p>
+              <ol class="steps">
+                <li>Turn on <a href="https://myaccount.google.com/signinoptions/twosv" target="_blank" rel="noopener">2-Step Verification</a> for your Google account.</li>
+                <li>Open <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">App passwords</a>, name it Jarvis and click Create.</li>
+                <li>Paste the 16-letter password below and save.</li>
+              </ol>
+              <div class="field-row">
+                <div class="field"><label for="setMail">Gmail address</label><input class="input" id="setMail" type="email" placeholder="you@gmail.com" autocomplete="off"></div>
+                <div class="field"><label for="setMailPw">App password</label><input class="input" id="setMailPw" type="password" placeholder="abcd efgh ijkl mnop" autocomplete="off"><span class="hint" id="mailPwState"></span></div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h3>Google Calendar</h3>
+              <p class="secondary" style="margin-bottom:12px">Lets Jarvis read your calendar for "what's on today" and briefings. New events open in Google Calendar ready to save.</p>
+              <ol class="steps">
+                <li>Open <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener">Google Calendar settings</a> and click your calendar under "Settings for my calendars".</li>
+                <li>Scroll to "Integrate calendar" and copy the <strong>Secret address in iCal format</strong>.</li>
+                <li>Paste it below and save. Anyone with this address can see your events, so keep it private.</li>
+              </ol>
+              <div class="field"><label for="setCal">Secret iCal address</label><input class="input" id="setCal" type="password" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" autocomplete="off"><span class="hint" id="calState"></span></div>
+            </div>
+            <div class="settings-group">
+              <h3>Picture generation (Cloudflare, free)</h3>
+              <p class="secondary" style="margin-bottom:12px">Lets Jarvis make pictures when you say "draw…" or "generate…". Cloudflare's free plan includes a daily allowance of AI pictures.</p>
+              <ol class="steps">
+                <li>Create a free account at <a href="https://dash.cloudflare.com/sign-up" target="_blank" rel="noopener">dash.cloudflare.com</a> and log in.</li>
+                <li>In the left menu open <strong>AI</strong> → <strong>Workers AI</strong>, then click <strong>Use REST API</strong>.</li>
+                <li>Click <strong>Create a Workers AI API Token</strong>, then <strong>Create API Token</strong>, and copy the token.</li>
+                <li>On the same page copy your <strong>Account ID</strong>. Paste both below and save.</li>
+              </ol>
+              <div class="field-row">
+                <div class="field"><label for="setCfAcc">Account ID</label><input class="input" id="setCfAcc" placeholder="32 letters and numbers" autocomplete="off" spellcheck="false"></div>
+                <div class="field"><label for="setCfTok">API token</label><input class="input" id="setCfTok" type="password" placeholder="Paste the token" autocomplete="off"><span class="hint" id="cfState"></span></div>
+              </div>
+              <div class="test-row"><button class="btn sm" id="cfTest" type="button"><i data-icon="check"></i><span>Test connection</span></button><span class="test-out" id="cfTestOut" role="status"></span></div>
+            </div>
+            <div class="settings-group">
+              <h3>Market data</h3>
+              <div class="field"><label for="setWatch">Watchlist</label><input class="input" id="setWatch" placeholder="TSLA, SPY, TTWO" autocomplete="off"><span class="hint">Up to 8 symbols. Yahoo Finance quotes, delayed up to 15 minutes.</span></div>
+            </div>
+            <div class="settings-actions"><button class="btn primary" data-save>Save changes</button><span class="saved" aria-live="polite"></span></div>
+            <h2 class="sub-h2">Connectors</h2><p class="lead">Let Jarvis use your other apps. Each one is set up once; after that just ask ("play Numb on Spotify", "what's on my calendar Friday", "find my bio notes in Drive", "what's new in #general"). Keys and sign-ins stay encrypted on this PC.</p>
+            <div class="conn-cards" id="connCards"><p class="secondary">Loading…</p></div>
+            <div class="settings-group" id="connAdd">
+              <h3>Add another app</h3>
+              <p class="secondary" style="margin-bottom:12px">Many apps offer an <strong>MCP server</strong> (the same standard Claude's connectors use): look for "MCP" in the app's help pages. Paste its web address, and you'll sign in like with Notion. Or paste the command that starts one on this PC (for example <code>npx -y @modelcontextprotocol/server-filesystem C:\Users\you\Desktop</code>; needs Node.js).</p>
+              <div class="field-row">
+                <div class="field"><label for="mcpName">Name</label><input class="input" id="mcpName" placeholder="e.g. Linear" autocomplete="off"></div>
+                <div class="field"><label for="mcpWords">Words that mean this app (optional)</label><input class="input" id="mcpWords" placeholder="e.g. tickets, issues, bugs" autocomplete="off"><span class="hint">Jarvis offers the app's tools when you say its name or one of these.</span></div>
+              </div>
+              <div class="field"><label for="mcpWhere">Web address or command</label><input class="input" id="mcpWhere" placeholder="https://mcp.example.com/mcp" autocomplete="off" spellcheck="false"></div>
+              <div class="field"><label for="mcpToken">API key or token (optional)</label><input class="input" id="mcpToken" type="password" placeholder="Only if the app gave you one instead of a sign-in. For commands: NAME=value" autocomplete="off"></div>
+              <div class="test-row"><button class="btn primary" id="mcpAddBtn" type="button"><i data-icon="plus"></i><span>Add and connect</span></button><span class="test-out" id="mcpAddOut" role="status"></span></div>
+            </div>
+          </div>
+
+          <div class="settings-page" id="set-skills" role="tabpanel">
+            <h2>Skills</h2><p class="lead">Routines you teach Jarvis. Say it in chat ("when I say gym mode, play my gym playlist and remind me in an hour") or write one here. Jarvis follows the steps whenever you ask for it.</p>
+            <div class="settings-group">
+              <div class="setting-row">
+                <div class="desc"><strong id="skillHead">Checking…</strong><span id="skillPath"></span></div>
+                <span class="row-btns"><button class="btn sm pc-only" id="skillOpen" type="button"><i data-icon="file"></i><span>Open folder</span></button><button class="btn sm primary" id="skillNew" type="button"><i data-icon="plus"></i><span>New skill</span></button></span>
+              </div>
+              <div class="skill-list" id="skillList"></div>
+            </div>
+            <div class="settings-group skill-editor" id="skillEditor" hidden>
+              <h3 id="skillEdTitle">New skill</h3>
+              <div class="field-row">
+                <div class="field"><label for="skName">Name</label><input class="input" id="skName" placeholder="Gym mode" maxlength="60" autocomplete="off"></div>
+                <div class="field"><label for="skDesc">When to use it</label><input class="input" id="skDesc" placeholder="When I say 'gym mode' or I'm going to the gym" autocomplete="off"></div>
+              </div>
+              <div class="field"><label for="skSteps">Steps</label><textarea class="input skill-steps" id="skSteps" rows="7" placeholder="1. Play my Gym playlist on Spotify.&#10;2. Set a reminder in 60 minutes: 'Stretch and drink water'.&#10;3. Say 'Go get them, sir.'"></textarea><span class="hint">Write it like instructions to Jarvis. Naming apps helps (Spotify, Calendar, Notion…).</span></div>
+              <div class="test-row"><button class="btn primary" id="skSave" type="button"><i data-icon="check"></i><span>Save skill</span></button><button class="btn ghost" id="skCancel" type="button">Cancel</button><span class="test-out" id="skOut" role="status"></span></div>
+            </div>
+          </div>
+
+          <div class="settings-page" id="set-phone" role="tabpanel">
+            <h2>Phone</h2><p class="lead">Use Jarvis from your phone, anywhere, with voice. Your PC must be on with Jarvis running. The connection is private through Tailscale and protected by your PIN.</p>
+            <div class="conn" role="status">
+              <span class="status-dot" id="phoneDot" aria-hidden="true"></span>
+              <span class="grow"><strong id="phoneHead">Checking…</strong><small id="phoneLine"></small></span>
+              <button class="btn sm" id="phoneRefresh" type="button"><i data-icon="refresh"></i><span>Check</span></button>
+            </div>
+            <div class="settings-group">
+              <h3>1 · Install Tailscale (free)</h3>
+              <ol class="steps">
+                <li>On this PC: <a href="https://tailscale.com/download/windows" target="_blank" rel="noopener">download Tailscale for Windows</a>, install it and sign in (Google login is fine).</li>
+                <li>On your phone: install <strong>Tailscale</strong> from the App Store or Google Play and sign in with the <strong>same account</strong>.</li>
+              </ol>
+            </div>
+            <div class="settings-group">
+              <h3>2 · Choose a PIN</h3>
+              <div class="field"><label for="phonePin">PIN (6 to 10 digits)</label>
+                <input class="input" id="phonePin" type="password" inputmode="numeric" maxlength="10" autocomplete="new-password" placeholder="••••••" style="max-width:240px">
+                <span class="hint" id="pinState">You'll type this once on the phone. Changing it logs out every phone.</span></div>
+              <button class="btn" id="phonePinSave" type="button" style="margin-bottom:20px">Save PIN</button>
+            </div>
+            <div class="settings-group">
+              <h3>3 · Turn on and connect</h3>
+              <div class="setting-row">
+                <div class="desc"><strong>Phone access</strong><span id="phoneAccessDesc">Shares Jarvis only with devices signed in to your Tailscale.</span></div>
+                <button class="btn primary" id="phoneToggle" type="button">Turn on</button>
+              </div>
+              <p class="form-error" id="phoneErr" role="alert"></p>
+              <div class="phone-qr" id="phoneQr" hidden>
+                <img id="phoneQrImg" alt="QR code with your Jarvis phone address" width="180" height="180">
+                <div>
+                  <strong>Scan with your phone's camera</strong>
+                  <p class="secondary" id="phoneUrl"></p>
+                  <ol class="steps">
+                    <li>Open the link and enter your PIN.</li>
+                    <li><strong>iPhone:</strong> Share → Add to Home Screen. <strong>Android:</strong> ⋮ menu → Install app.</li>
+                    <li>Tap the Jarvis icon. Allow the microphone the first time you talk.</li>
+                  </ol>
+                </div>
+              </div>
+              <button class="btn ghost sm" id="phoneLogout" type="button" style="margin-bottom:20px">Log out all phones</button>
+            </div>
+          </div>
+
+          <div class="settings-page" id="set-memory" role="tabpanel">
+            <h2>About you</h2><p class="lead">What Jarvis knows about you. It learns from your conversations and uses this to answer, decide and write the way you would. Saved only on this PC in jarvis_profile.json, and sent to Gemini with your questions so it can answer like you.</p>
+            <div class="settings-group">
+              <div class="setting-row">
+                <label class="desc" for="setLearn"><strong>Learn from conversations</strong><span>After you say something about yourself, Jarvis quietly notes it. It never saves passwords, codes or card numbers.</span></label>
+                <label class="switch"><input type="checkbox" id="setLearn"><span class="sr-only">Learn from conversations</span></label>
+              </div>
+              <div class="setting-row">
+                <div class="desc"><strong>Speed it up</strong><span>Jarvis asks you short questions, one at a time, about your life, goals and how you make decisions. Say "stop" whenever you like.</span></div>
+                <button class="btn primary" id="interviewBtn" type="button"><i data-icon="sparkle"></i><span>Get to know me</span></button>
+              </div>
+            </div>
+            <div class="settings-group">
+              <h3>Tell Jarvis something</h3>
+              <div class="profile-add">
+                <select class="select" id="profileCat" aria-label="Category"></select>
+                <input class="input" id="profileText" placeholder="e.g. I prefer short answers and hate small talk" maxlength="160" autocomplete="off">
+                <button class="btn" id="profileAdd" type="button"><i data-icon="plus"></i><span>Add</span></button>
+              </div>
+            </div>
+            <div class="settings-group" id="knowGroup">
+              <h3>Knowledge folder</h3>
+              <p class="secondary" style="margin-bottom:12px">Drop your notes, school material, Word files and PDFs here. When you ask about them ("what do my biology notes say about photosynthesis?"), Jarvis searches the folder and answers from the matching parts only, so a big folder doesn't slow it down. Files stay on this PC; only the matching excerpts are sent to the AI.</p>
+              <div class="setting-row">
+                <div class="desc"><strong id="knowHead">Checking…</strong><span id="knowPath"></span></div>
+                <span class="row-btns"><button class="btn sm" id="knowRefresh" type="button"><i data-icon="refresh"></i><span>Refresh</span></button><button class="btn sm primary pc-only" id="knowOpen" type="button"><i data-icon="file"></i><span>Open folder</span></button></span>
+              </div>
+              <ul class="know-files" id="knowFiles"></ul>
+            </div>
+            <div id="memoryList" style="max-width:700px"></div>
+            <button class="btn ghost sm danger" id="profileClear" type="button" style="margin-top:16px">Forget everything</button>
+          </div>
+
+          <div class="settings-page" id="set-about" role="tabpanel">
+            <h2>Help</h2><p class="lead">Your personal assistant, running on this PC.</p>
+            <dl class="about-list">
+              <dt>Version</dt><dd id="aboutVersion" class="num">…</dd>
+              <dt>Local address</dt><dd id="aboutAddress" class="mono"></dd>
+              <dt>Your data</dt><dd>Settings, tasks, memory and conversation are saved in the Jarvis folder on this PC.</dd>
+              <dt>Error log</dt><dd class="mono">jarvis_log.txt</dd>
+              <dt>Speech</dt><dd>Recognition runs locally (faster-whisper). Natural voices use Microsoft Edge's online voice service.</dd>
+            </dl>
+            <h3 class="sub-h">This PC</h3>
+            <div class="about-list" id="ctxSystem"><span class="muted">Loading…</span></div>
+            <h2 class="sub-h2">Keyboard shortcuts</h2><p class="lead">Work with Jarvis without the mouse.</p>
+            <table class="shortcuts-table">
+              <tbody>
+                <tr><td>Open Jarvis from anywhere in Windows</td><td><span class="kbd">Ctrl</span> + <span class="kbd">Alt</span> + <span class="kbd">J</span></td></tr>
+                <tr><td>Talk, or stop listening</td><td><span class="kbd">Ctrl</span> + <span class="kbd">Space</span></td></tr>
+                <tr><td>Focus the message box</td><td><span class="kbd">/</span></td></tr>
+                <tr><td>Send message</td><td><span class="kbd">Enter</span></td></tr>
+                <tr><td>New line in a message</td><td><span class="kbd">Shift</span> + <span class="kbd">Enter</span></td></tr>
+                <tr><td>Stop speaking or listening, close panels</td><td><span class="kbd">Esc</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ===================== Conversation ===================== -->
+    <aside class="conversation" id="conversation" aria-labelledby="convT">
+      <div class="conversation-head">
+        <h2 id="convT">History</h2>
+        <button class="icon-btn tooltip" id="clearThread" type="button" aria-label="Clear conversation" data-tip="Clear conversation"><i data-icon="trash"></i></button>
+        <button class="icon-btn tooltip" id="closePanel" type="button" aria-label="Hide history" data-tip="Hide"><i data-icon="panel"></i></button>
+      </div>
+      <div class="thread" id="thread" tabindex="-1" aria-live="polite" aria-relevant="additions"></div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# Extra packages for building the Windows app (Jarvis.exe)
+pyinstaller
+pywebview
+pystray

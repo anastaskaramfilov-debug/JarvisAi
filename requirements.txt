@@ -1,0 +1,18 @@
+flask
+requests
+numpy
+faster-whisper
+pillow
+ddgs
+tzdata
+sounddevice
+edge-tts
+psutil
+icalendar
+recurring-ical-events
+qrcode
+pypdf
+winrt-runtime; sys_platform == "win32"
+winrt-Windows.Media.Control; sys_platform == "win32"
+winrt-Windows.Foundation; sys_platform == "win32"
+winrt-Windows.Storage.Streams; sys_platform == "win32"
