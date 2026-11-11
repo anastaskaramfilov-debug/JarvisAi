@@ -5367,8 +5367,11 @@ def main():
     threading.Thread(target=block_sweeper, daemon=True).start()
     threading.Thread(target=mail_watcher, daemon=True).start()
     threading.Thread(target=market_watcher, daemon=True).start()
-    threading.Thread(target=get_whisper, daemon=True).start()       # warm up speech model
-    threading.Thread(target=_start_apps, daemon=True).start()       # list installed apps once
+    # Heavy warm-ups wait until Jarvis is open and settled, so starting stays quick
+    for delay, job in ((40, get_whisper), (20, _start_apps)):       # speech model (loads on first use if sooner), app list
+        t = threading.Timer(delay, job)
+        t.daemon = True
+        t.start()
     if FROZEN:
         threading.Thread(target=update_watcher, daemon=True).start()
     if not os.environ.get("JARVIS_NO_BROWSER"):
