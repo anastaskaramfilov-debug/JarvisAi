@@ -2,6 +2,7 @@
 import { $, $$, api, esc, hhmm, state, on, emit, confirmDialog, toast, dayLabel, relTime, repeatLabel } from "./core.js";
 import { icon } from "./icons.js";
 import { sparkline } from "./core.js";
+import { liveChart, avatar } from "./polish.js";
 
 const loading = text => `<div class="loading-state"><span class="spinner" aria-hidden="true"></span><span>${esc(text)}</span></div>`;
 const errorBox = (title, body, retryId) => `<div class="error-state" role="alert"><h3>${esc(title)}</h3><p>${esc(body)}</p>${retryId ? `<button class="btn" id="${retryId}">${icon("refresh")}<span>Try again</span></button>` : ""}</div>`;
@@ -13,7 +14,10 @@ function renderTasks(list) {
   const box = $("#tasksList");
   $("#tasksMeta").textContent = list.length ? `${list.length} upcoming` : "";
   if (!list.length) {
-    box.innerHTML = `<div class="empty-state card glass"><h3>No upcoming tasks</h3><p>Add one on the right, or just tell Jarvis: "remind me at 18:00 to study".</p></div>`;
+    box.innerHTML = `<div class="empty-state hero"><span class="es-icon">${icon("list-checks")}</span><h3>Nothing on your list</h3>
+      <p>Pick a quick one to start, type your own on the right, or just tell Jarvis: "remind me at 18:00 to study".</p>
+      <div class="chip-row">${["Study in 30 min", "Drink water in 1 hour", "Check the market at 16:25", "Call dad tomorrow 18:00"].map(t => `<button class="chip" type="button" data-quick="${esc(t)}">${icon("plus")}<span>${esc(t)}</span></button>`).join("")}</div></div>`;
+    $$("[data-quick]", box).forEach(b => b.onclick = () => { const i = $("#taskQuickInput"); i.value = b.dataset.quick; i.focus(); i.closest(".card")?.classList.add("nudge"); setTimeout(() => i.closest(".card")?.classList.remove("nudge"), 700); });
     return;
   }
   const groups = new Map();
@@ -112,8 +116,8 @@ export async function loadInbox() {
     return;
   }
   box.innerHTML = inboxItems.map((e, i) => `
-    <button class="mail-item" type="button" data-i="${i}" aria-pressed="false">
-      ${inboxUnreadOnly ? '<span class="unread" aria-label="Unread"></span>' : "<span></span>"}
+    <button class="mail-item" type="button" data-i="${i}" aria-pressed="false" style="--i:${Math.min(i, 12)}">
+      <span class="mi-av">${avatar(e.from)}${inboxUnreadOnly ? '<span class="unread" aria-label="Unread"></span>' : ""}</span>
       <span class="mi-main"><span class="from">${esc(e.from)}</span><span class="subject">${esc(e.subject)}</span><span class="preview">${esc((e.preview || "").slice(0, 110))}</span></span>
       <span class="time num">${esc(e.when)}</span>
     </button>`).join("") + `<p class="data-note">Latest ${inboxItems.length}. Opening an email here doesn't mark it as read.</p>`;
@@ -123,9 +127,9 @@ function showMail(i) {
   inboxSel = i;
   $$(".mail-item").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.i === i)));
   const pane = $("#inboxRead"), e = inboxItems[i];
-  if (!e) { pane.innerHTML = `<div class="empty-state"><h3>Select an email</h3><p>Its text appears here, with buttons to archive it, mark it read, or have Jarvis draft a reply.</p></div>`; return; }
+  if (!e) { pane.innerHTML = `<div class="empty-state hero center"><span class="es-icon">${icon("mail")}</span><h3>Pick an email</h3><p>It opens here, with buttons to archive it, mark it read, or have Jarvis draft a reply.</p><p class="es-keys"><kbd>↑</kbd><kbd>↓</kbd> move through the list</p></div>`; return; }
   pane.innerHTML = `
-    <header class="mr-head"><h2>${esc(e.subject)}</h2><p><b>${esc(e.from)}</b> · <span class="num">${esc(e.when)}</span></p></header>
+    <header class="mr-head"><h2>${esc(e.subject)}</h2><p class="mr-from">${avatar(e.from)}<b>${esc(e.from)}</b> · <span class="num">${esc(e.when)}</span></p></header>
     <div class="mr-actions">
       <button class="btn sm primary" data-ma="reply">${icon("sparkle")}<span>Draft reply</span></button>
       <button class="btn sm" data-ma="summary">${icon("message-square")}<span>Summarise</span></button>
@@ -239,12 +243,13 @@ export async function loadMarkets(quiet = false) {
     $("#marketsMeta").textContent = "";
     return;
   }
+  box.classList.toggle("stagger", !quiet);
   box.innerHTML = rows.map(q => {
     const sym = esc(q.ticker || "?");
     if (q.error || q.price == null) return `<div class="mkt-card card glass"><div class="mc-top"><b>${sym}</b><button class="icon-btn sm" data-wrm="${sym}" aria-label="Remove ${sym}">${icon("x")}</button></div><p class="w-note">No data for this symbol.</p></div>`;
     const up = (q.change_percent ?? 0) >= 0, tv = encodeURIComponent(String(q.ticker).replace("^", ""));
     const ch = q.previous_close != null ? q.price - q.previous_close : null;
-    return `<div class="mkt-card card glass">
+    return `<div class="mkt-card card glass ${up ? "is-up" : "is-down"}" data-sym="${sym}" style="--i:${rows.indexOf(q)}">
       <div class="mc-top"><span><b>${sym}</b><small>${esc(q.exchange || "")}</small></span>
         <span class="mc-acts"><a class="icon-btn sm tooltip" href="https://www.tradingview.com/symbols/${tv}/" target="_blank" rel="noopener" data-tip="TradingView" aria-label="Open ${sym} on TradingView">${icon("external")}</a>
         <button class="icon-btn sm tooltip" data-wrm="${sym}" data-tip="Remove" aria-label="Remove ${sym}">${icon("x")}</button></span></div>
@@ -255,6 +260,7 @@ export async function loadMarkets(quiet = false) {
         <button class="btn xs" data-wask="${sym}">${icon("sparkle")}<span>Ask Jarvis</span></button></div>
     </div>`;
   }).join("");
+  $$(".mkt-card[data-sym]", box).forEach(c => { const q = rows.find(r => String(r.ticker) === c.dataset.sym); if (q?.spark) liveChart($(".mc-chart", c), q.spark, { prev: q.previous_close }); });
   $$("[data-wask]", box).forEach(b => b.onclick = () => { emit("ask", `How is ${b.dataset.wask} doing today, and what's moving it?`); emit("navigate", "assistant"); });
   $$("[data-wrm]", box).forEach(b => b.onclick = () => setWatch((state.config.watchlist || []).filter(t => t !== b.dataset.wrm)));
   $("#marketsMeta").textContent = `${d.note || "Delayed quotes"} · updated ${d.fetched_at}`;

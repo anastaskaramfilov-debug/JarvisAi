@@ -1403,3 +1403,96 @@ body:has(#appBody:not([data-view="assistant"])) .aurora i { animation-play-state
 .live-confirms .cb-title { display: flex; align-items: center; gap: var(--s-2); }
 .live-confirms .cb-detail { white-space: pre-wrap; max-height: 9em; overflow: auto; color: var(--text-secondary); }
 #view-assistant.viewing .live-confirms { display: none; }
+
+/* =========================================================================
+   Polish layer (2.4): command palette, cursor glow on cards, live charts,
+   avatars, friendlier empty states. Transform/opacity only, so it stays smooth.
+   ========================================================================= */
+kbd { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 6px; font: 600 10.5px/1 var(--font-ui, inherit); letter-spacing: 0.02em; color: var(--text-muted); background: rgb(var(--tint) / 0.06); border: 1px solid var(--glass-border); }
+
+/* -- top-bar search pill -- */
+.palette-btn { display: inline-flex; align-items: center; gap: 10px; height: 32px; width: min(340px, 30vw); padding: 0 8px 0 12px; border-radius: var(--r-full); border: 1px solid var(--glass-border); background: rgb(var(--tint) / 0.04); color: var(--text-muted); font-size: 12.5px; cursor: pointer; transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.3s; }
+.palette-btn svg { width: 14px; height: 14px; color: var(--accent-hover); }
+.palette-btn span { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.palette-btn:hover { background: rgb(var(--tint) / 0.08); border-color: rgba(139, 123, 255, 0.45); color: var(--text-secondary); box-shadow: 0 0 24px rgba(139, 123, 255, 0.18); }
+@media (max-width: 900px) { .palette-btn span, .palette-btn kbd { display: none; } .palette-btn { width: 32px; padding: 0; justify-content: center; } }
+
+/* -- palette -- */
+.palette { width: min(620px, 92vw); max-height: min(560px, 80vh); margin: 14vh auto auto; padding: 0; border-radius: 18px; border: 1px solid var(--glass-border-strong); background: var(--dialog-bg); color: var(--text-primary); box-shadow: var(--shadow-pop), 0 0 80px rgba(139, 123, 255, 0.18); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); overflow: hidden; }
+.palette[open] { display: flex; flex-direction: column; animation: pal-in 0.22s cubic-bezier(.2, .9, .3, 1.15); }
+.palette::backdrop { background: var(--scrim); backdrop-filter: blur(3px); animation: fade 0.2s; }
+@keyframes pal-in { from { opacity: 0; transform: translateY(-10px) scale(0.97); } }
+.pal-top { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--divider); }
+.pal-top svg { width: 18px; height: 18px; color: var(--accent-hover); flex: none; }
+.pal-input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: inherit; font: inherit; font-size: 16px; }
+.pal-input::placeholder { color: var(--text-faint); }
+.pal-list { overflow-y: auto; padding: 6px 8px 8px; }
+.pal-group { padding: 10px 10px 4px; font-size: 10.5px; font-weight: var(--weight-semibold); letter-spacing: var(--track-wide); text-transform: uppercase; color: var(--text-faint); }
+.pal-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 10px; border: 0; border-radius: 10px; background: none; color: var(--text-secondary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.pal-item svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
+.pal-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pal-item[aria-selected="true"] { background: var(--accent-soft); color: var(--text-primary); }
+.pal-item[aria-selected="true"] svg { color: var(--accent-hover); }
+.pal-foot { display: flex; gap: 18px; padding: 10px 18px; border-top: 1px solid var(--divider); font-size: 11.5px; color: var(--text-faint); }
+.pal-foot span { display: inline-flex; align-items: center; gap: 5px; }
+
+/* -- cursor glow + lift on cards everywhere -- */
+.card, .settings-group { position: relative; transition: box-shadow 0.35s ease, border-color 0.35s ease, translate 0.35s cubic-bezier(.2, .8, .2, 1); }
+.card::after, .settings-group::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity 0.35s ease;
+  background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), rgba(139, 123, 255, 0.13), transparent 70%); }
+.card:hover::after, .settings-group:hover::after { opacity: 1; }
+.mkt-card:hover { translate: 0 -3px; box-shadow: var(--glass-inset), 0 22px 50px rgba(0, 0, 0, 0.32); }
+.mkt-card.is-up:hover { border-color: color-mix(in srgb, var(--up) 40%, transparent); }
+.mkt-card.is-down:hover { border-color: color-mix(in srgb, var(--down) 40%, transparent); }
+.mkt-card.is-up::after { background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--up) 14%, transparent), transparent 70%); }
+.mkt-card.is-down::after { background: radial-gradient(260px circle at var(--mx, 50%) var(--my, 50%), color-mix(in srgb, var(--down) 13%, transparent), transparent 70%); }
+
+/* -- lists arrive one after another -- */
+.stagger > .mkt-card, #inboxList > .mail-item { animation: rise-in 0.42s cubic-bezier(.2, .8, .2, 1) backwards; animation-delay: calc(var(--i, 0) * 38ms); }
+
+/* -- live charts -- */
+.live-chart { position: relative; cursor: crosshair; }
+.lc-line, .lc-dot, .lc-tip { position: absolute; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
+.live-chart.on .lc-line, .live-chart.on .lc-dot, .live-chart.on .lc-tip { opacity: 1; }
+.lc-line { top: 8px; bottom: 4px; width: 1px; background: linear-gradient(transparent, rgb(var(--tint) / 0.35), transparent); }
+.lc-dot { width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--text-primary); box-shadow: 0 0 0 3px rgb(var(--tint) / 0.14), 0 0 14px var(--accent); }
+.lc-tip { top: -8px; translate: -50% -100%; display: inline-flex; gap: 8px; align-items: baseline; padding: 5px 9px; border-radius: 8px; white-space: nowrap; font-size: 12px; background: var(--dialog-bg); border: 1px solid var(--glass-border-strong); box-shadow: var(--shadow-pop); z-index: 5; }
+.lc-tip i { font-style: normal; font-weight: var(--weight-semibold); }
+.lc-tip .up { color: var(--up); } .lc-tip .down { color: var(--down); }
+
+/* -- avatars -- */
+.avatar { display: inline-grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; font-size: 12px; font-weight: var(--weight-semibold); letter-spacing: 0.02em; color: #fff;
+  background: linear-gradient(140deg, hsl(var(--h) 62% 58%), hsl(calc(var(--h) + 40) 58% 42%)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25); }
+.mail-item { grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: start; position: relative; }
+.mi-av { position: relative; display: block; }
+.mail-item .mi-av .unread { position: absolute; top: -2px; left: -2px; width: 10px; height: 10px; margin: 0; box-shadow: 0 0 0 2px rgb(var(--tint) / 0.25); }
+.mail-item::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px; border-radius: 3px; background: var(--accent-hover); opacity: 0; scale: 1 0.3; transition: opacity 0.2s, scale 0.25s cubic-bezier(.2, .8, .2, 1); }
+.mail-item[aria-pressed="true"]::before { opacity: 1; scale: 1 1; }
+.mail-item:hover .avatar { scale: 1.06; } .avatar { transition: scale 0.25s cubic-bezier(.2, .8, .2, 1.4); }
+.mr-from { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mr-from .avatar { width: 30px; height: 30px; font-size: 11px; }
+.mail-read > * { animation: rise-in 0.3s cubic-bezier(.2, .8, .2, 1) backwards; }
+
+/* -- friendlier empty states -- */
+.empty-state.hero { align-items: flex-start; gap: 12px; padding: 34px 32px; max-width: 640px; background: linear-gradient(160deg, rgba(139, 123, 255, 0.10), transparent 60%), var(--glass); animation: rise-in 0.4s cubic-bezier(.2, .8, .2, 1) backwards; }
+.empty-state.hero.center { align-items: center; text-align: center; margin: 12vh auto 0; border-color: transparent; background: none; }
+.es-icon { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 16px; color: var(--accent-hover); background: var(--accent-soft); box-shadow: 0 0 40px rgba(139, 123, 255, 0.25); animation: es-float 5s ease-in-out infinite; }
+.es-icon svg { width: 24px; height: 24px; }
+@keyframes es-float { 50% { translate: 0 -5px; } }
+.es-keys { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-faint) !important; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px 0 10px; border-radius: var(--r-full); border: 1px solid var(--glass-border); background: rgb(var(--tint) / 0.04); color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; transition: background 0.2s, border-color 0.2s, color 0.2s, translate 0.25s cubic-bezier(.2, .8, .2, 1.4); }
+.chip svg { width: 14px; height: 14px; color: var(--accent-hover); }
+.chip:hover { background: var(--accent-soft); border-color: rgba(139, 123, 255, 0.5); color: var(--text-primary); translate: 0 -2px; }
+.chip:active { translate: 0 0; scale: 0.97; }
+.card.nudge { animation: nudge 0.6s cubic-bezier(.2, .8, .2, 1); border-color: rgba(139, 123, 255, 0.6); box-shadow: 0 0 0 4px rgba(139, 123, 255, 0.14); }
+@keyframes nudge { 30% { translate: -6px 0; } 60% { translate: 4px 0; } }
+
+/* -- small touches -- */
+.task-row { border-radius: 10px; transition: opacity 0.4s ease, translate 0.4s ease, background 0.2s; }
+.task-row:hover { background: rgb(var(--tint) / 0.035); }
+.nav-item:active svg { transform: scale(0.88); }
+.icon-btn { transition: background 0.2s, color 0.2s, scale 0.2s cubic-bezier(.2, .8, .2, 1.4); }
+.icon-btn:active { scale: 0.9; }
+@media (prefers-reduced-motion: reduce) { .es-icon, .stagger > .mkt-card, #inboxList > .mail-item, .mail-read > *, .palette[open] { animation: none; } }
+.pal-input:focus, .pal-input:focus-visible { outline: none !important; box-shadow: none !important; border: 0 !important; }

@@ -12,6 +12,7 @@ import { initAlive } from "./alive.js";
 import { initWidgets, initUpdateCheck } from "./widgets.js";
 import { initFun } from "./fun.js";
 import { initNative } from "./native.js";
+import { initPolish } from "./polish.js";
 
 const TITLES = { assistant: "Assistant", tasks: "Tasks", inbox: "Inbox", markets: "Market Watch", customize: "Customize", settings: "Settings" };
 
@@ -62,6 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initViews();
   initSettings();
   initFun();
+  initPolish();
   navigate((location.hash || "").slice(1) || "assistant");
   try { if (Notification.permission === "default") Notification.requestPermission(); } catch (_) {}
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
