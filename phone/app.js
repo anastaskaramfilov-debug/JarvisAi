@@ -1,6 +1,6 @@
 // Jarvis on the phone: his own Gemini brain and voice, your profile and tasks synced with the PC through a private
 // GitHub repo, end-to-end encrypted with your passphrase (same format as jarvis_sync.py on the PC).
-import { icon, hydrateIcons } from "./pc/icons.js";
+import { icon, hydrateIcons, weatherIcon } from "./pc/icons.js";
 
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -136,7 +136,8 @@ async function sync() {
         break;
       }
       setSync("ok", "Synced " + hm(new Date()));
-      renderTasks();
+      await loadSnapshot();
+      renderAll();
     } catch (e) {
       setSync(navigator.onLine ? "bad" : "off", navigator.onLine ? "Sync problem" : "Offline");
       console.warn(e);
@@ -254,7 +255,7 @@ function completeTask(id) {
     while (t.repeat === "weekdays" && (d.getDay() === 0 || d.getDay() === 6)) d.setDate(d.getDate() + 1);
     S.state.tasks = S.state.tasks.map(x => x.id === id ? { ...x, due: isoMin(d) } : x);
   } else S.state.tasks = S.state.tasks.filter(x => x.id !== id);
-  changed(); renderTasks();
+  changed(); renderTasks(); renderGlance();
 }
 
 /* =========================================================================
@@ -499,7 +500,7 @@ function setState(s) {
   chip.innerHTML = (s === "idle" ? '<span class="pulse-dot"></span>' : "") + `<span>${LABELS[s] || s}</span>`;
   document.documentElement.dataset.mood = s === "idle" ? "" : s;
 }
-function setCaption(text, kind = "") { const c = $("#caption"); c.textContent = text; c.dataset.kind = kind; }
+function setCaption(text, kind = "") { const c = $("#caption"); c.textContent = text; c.dataset.kind = kind; c.parentElement.scrollTop = 0; }
 function msgEl(m) {
   const kind = m.role === "assistant" ? "assistant" : "user";
   const a = document.createElement("article");
@@ -510,19 +511,145 @@ function msgEl(m) {
 }
 function renderThread() {
   const th = $("#thread"); th.innerHTML = "";
-  const items = (S.state.history || []).slice(-60);
-  if (!items.length) th.innerHTML = `<p class="secondary">No messages yet.</p>`;
+  const items = (S.state?.history || []).slice(-80);
+  $("#histMeta").textContent = items.length ? `${items.length} messages` : "";
+  if (!items.length) th.innerHTML = empty("message-square", "No messages yet", "Everything you ask Jarvis here or on the PC shows up on this page.");
   items.forEach(m => th.appendChild(msgEl(m)));
   requestAnimationFrame(() => { th.scrollTop = th.scrollHeight; });
 }
+const empty = (ic, title, body) => `<div class="p-empty"><span class="es-icon">${icon(ic)}</span><h3>${esc(title)}</h3><p>${esc(body)}</p></div>`;
+function relTime(d) {
+  const m = Math.round((d - Date.now()) / 60000);
+  if (m <= 0) return "now";
+  if (m < 60) return `in ${m} min`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `in ${h}h${m % 60 ? ` ${m % 60}m` : ""}` : `in ${Math.round(h / 24)} day${Math.round(h / 24) > 1 ? "s" : ""}`;
+}
+function sortedTasks() { return (S.state?.tasks || []).slice().sort((a, b) => a.due.localeCompare(b.due)); }
 function renderTasks() {
-  const list = (S.state?.tasks || []).slice().sort((a, b) => a.due.localeCompare(b.due));
+  const list = sortedTasks();
   const c = $("#taskCount"); c.textContent = list.length; c.hidden = !list.length;
+  $("#tasksMeta").textContent = list.length ? `${list.length} upcoming` : "";
   $("#taskList").innerHTML = list.length ? list.map(t => {
-    const d = new Date(t.due);
-    return `<li><button class="p-tick" data-done="${esc(t.id)}" aria-label="Done: ${esc(t.message)}"></button><span><b>${esc(t.message)}</b><small>${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${hm(d)}${t.repeat && t.repeat !== "none" ? " · " + esc(t.repeat) : ""}</small></span></li>`;
-  }).join("") : `<li class="empty">No tasks. Ask Jarvis or add one below.</li>`;
-  $$("[data-done]").forEach(b => b.onclick = () => { b.classList.add("on"); setTimeout(() => completeTask(b.dataset.done), 250); });
+    const d = new Date(t.due), soon = d - Date.now() < 3600e3;
+    return `<li><button class="p-tick" type="button" data-done="${esc(t.id)}" aria-label="Done: ${esc(t.message)}">${icon("check")}</button><span><b>${esc(t.message)}</b><small class="${soon ? "soon" : ""}">${d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${hm(d)} · ${relTime(d)}${t.repeat && t.repeat !== "none" ? " · " + esc(t.repeat) : ""}</small></span><button class="p-del" type="button" data-del="${esc(t.id)}" aria-label="Delete: ${esc(t.message)}">${icon("trash")}</button></li>`;
+  }).join("") : "";
+  if (!list.length) $("#taskList").innerHTML = `<li style="display:block;border:0">${empty("list-checks", "Nothing on your list", 'Type one below, like "call dad at 18:00", or just tell Jarvis.')}</li>`;
+  $$("[data-done]").forEach(b => b.onclick = () => { b.classList.add("on"); b.closest("li").classList.add("gone"); setTimeout(() => completeTask(b.dataset.done), 300); });
+  $$("[data-del]").forEach(b => b.onclick = () => { if (!confirm("Delete this task?")) return; S.state.tasks = S.state.tasks.filter(x => x.id !== b.dataset.del); changed(); renderTasks(); renderGlance(); });
+}
+
+// ---- Markets and Inbox come from the PC's snapshot (the phone can't reach Yahoo or Gmail by itself)
+async function loadSnapshot() {
+  try {
+    const r = await readFile("snapshot.enc", true);
+    if (r.changed && r.obj) { S.snap = r.obj; await localSeal("snap", r.obj); }
+  } catch (e) { console.warn(e); }
+}
+function spark(values, up, w = 96, h = 34) {
+  const v = (values || []).filter(x => typeof x === "number");
+  if (v.length < 2) return `<svg class="spark" viewBox="0 0 ${w} ${h}"></svg>`;
+  const min = Math.min(...v), max = Math.max(...v), span = max - min || 1;
+  const d = v.map((y, i) => `${i ? "L" : "M"}${((i / (v.length - 1)) * (w - 2) + 1).toFixed(1)} ${(h - 3 - ((y - min) / span) * (h - 6)).toFixed(1)}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="var(${up ? "--up" : "--down"})" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+function snapAge() {
+  const t = S.snap?.t;
+  if (!t) return "";
+  const m = Math.round((now() - t) / 60);
+  return m < 2 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+}
+const NEEDS_PC = "Open Jarvis on your PC (version 2.4.1 or newer, with sync on). He sends this page here every 10 minutes while the PC is on.";
+function renderMarkets() {
+  const k = TOOLS.market_status.run();
+  $("#mktState").textContent = k.open ? "US market is open now" : `US market is closed (${k.today})`;
+  const q = S.snap?.quotes, box = $("#mktList");
+  $("#mktMeta").textContent = q?.length ? `from your PC · ${snapAge()}` : "";
+  if (!S.snap) { box.innerHTML = empty("line-chart", "No prices yet", NEEDS_PC); return; }
+  if (!q.length) { box.innerHTML = empty("line-chart", "Your watchlist is empty", "Add tickers on the PC: Markets, then Add."); return; }
+  box.innerHTML = q.map(x => {
+    const sym = esc(x.ticker || "?");
+    if (x.error || x.price == null) return `<button class="p-mkt" type="button" data-sym="${sym}"><span class="sym"><b>${sym}</b><small>no data</small></span><span></span><span></span></button>`;
+    const up = (x.change_percent ?? 0) >= 0;
+    return `<button class="p-mkt" type="button" data-sym="${sym}"><span class="sym"><b>${sym}</b><small>${esc(x.exchange || "")}</small></span>${spark(x.spark, up)}<span class="px"><b>${Number(x.price).toFixed(2)}</b><i class="${up ? "up" : "down"}">${up ? "+" : ""}${(x.change_percent ?? 0).toFixed(2)}%</i></span></button>`;
+  }).join("") + `<p class="secondary p-small">Tap a stock and Jarvis looks up what's moving it. Prices are delayed and only as fresh as the time above.</p>`;
+  $$("#mktList [data-sym]").forEach(b => b.onclick = () => { go("home"); ask(`How is ${b.dataset.sym} doing today, and what's moving it?`); });
+}
+function avatar(name) {
+  const clean = String(name || "?").replace(/["'<>]/g, "").trim();
+  const words = clean.split(/\s+/).filter(w => /[\p{L}\p{N}]/u.test(w));
+  let h = 0; for (const ch of clean) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `<span class="avatar" style="--h:${h}" aria-hidden="true">${esc(((words[0]?.[0] || "?") + (words[1]?.[0] || "")).toUpperCase())}</span>`;
+}
+function renderInbox() {
+  const m = S.snap?.inbox, box = $("#inboxList"), c = $("#inboxCount");
+  const n = m?.unread || 0;
+  c.textContent = n > 99 ? "99+" : n; c.hidden = !n;
+  $("#inboxMeta").textContent = m?.emails ? `${n} unread · ${snapAge()}` : "";
+  if (!S.snap) { box.innerHTML = empty("inbox", "No mail yet", NEEDS_PC); return; }
+  if (m.setup) { box.innerHTML = empty("mail", "Gmail isn't connected", "Connect it on the PC: Settings, then Apps & accounts."); return; }
+  if (m.error) { box.innerHTML = empty("alert", "The PC couldn't open your inbox", "It tries again in 10 minutes."); return; }
+  if (!m.emails.length) { box.innerHTML = empty("check", "No unread mail", "You're all caught up."); return; }
+  box.innerHTML = m.emails.map((e, i) => `<button class="p-mail" type="button" data-i="${i}">${avatar(e.from)}<span style="min-width:0"><span class="top"><span class="from">${esc(e.from)}</span><time>${esc(e.when || "")}</time></span><span class="subject">${esc(e.subject)}</span><span class="preview">${esc(e.preview || "")}</span>
+    <span class="acts"><span data-act="sum">${icon("sparkle")}Summarise</span><span data-act="reply">${icon("mail")}Draft reply</span></span></span></button>`).join("") +
+    `<p class="secondary p-small">Newest ${m.emails.length} unread, as your PC last saw them. Summaries and replies are done by the PC, so it has to be on.</p>`;
+  $$("#inboxList .p-mail").forEach(b => b.onclick = ev => {
+    const e = m.emails[+b.dataset.i], act = ev.target.closest("[data-act]")?.dataset.act;
+    if (!act) { const was = b.classList.contains("open"); $$("#inboxList .p-mail.open").forEach(x => x.classList.remove("open")); b.classList.toggle("open", !was); return; }
+    go("home");
+    ask(act === "sum" ? `Summarise the email from ${e.from} with the subject "${e.subject}".` : `Draft a reply to the email from ${e.from} with the subject "${e.subject}". Read me the draft, don't send it.`);
+  });
+}
+
+// ---- Home: the clock and weather tiles
+let wx = null, wxAt = 0;
+function renderGlance() {
+  const d = new Date();
+  $("#gTime").textContent = hm(d);
+  $("#gDate").textContent = `${d.toLocaleDateString([], { weekday: "short" })} ${d.getDate()} ${d.toLocaleDateString([], { month: "short" })}`;
+  const next = sortedTasks()[0];
+  $("#gNext").textContent = next ? `${hm(new Date(next.due))} ${next.message}` : "Nothing scheduled";
+  if (wx) { $("#gTemp").textContent = `${wx.now_c}° ${wx.place.split(",")[0]}`; $("#gWText").textContent = `${wx.days[0].low}° / ${wx.days[0].high}° · rain ${wx.days[0].rain_chance ?? 0}%`; $("#gWIcon").innerHTML = icon(weatherIcon(wx.code)); }
+}
+async function loadWeather() {
+  if (Date.now() - wxAt < 30 * 60000) return;
+  wxAt = Date.now();
+  try { const w = await TOOLS.get_weather.run({}); if (!w.error) { wx = w; renderGlance(); } } catch (_) { wxAt = 0; }
+}
+function renderAll() { renderTasks(); renderGlance(); renderMarkets(); renderInbox(); if (page === "history") renderThread(); }
+
+// ---- pages
+let page = "home";
+function go(name) {
+  page = name;
+  $$(".p-page").forEach(p => p.classList.toggle("active", p.dataset.page === name));
+  $$(".p-tabs [data-tab]").forEach(b => b.dataset.tab === name ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
+  document.activeElement?.blur?.();
+  if (name === "history") renderThread();
+  if (name === "markets") renderMarkets();
+  if (name === "inbox") renderInbox();
+  if (name === "tasks") renderTasks();
+  if (name === "home") sizeOrb();
+}
+let toastTimer = 0;
+function toast(text) { const t = $("#toast"); t.textContent = text; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+
+// "call dad at 18:00", "study in 20 min", "dentist tomorrow 9:30": added straight away, no AI needed
+function quickTask(text) {
+  let msg = text, due = null, m;
+  if ((m = msg.match(/\bin\s+(\d+)\s*(min|mins|minutes|m|h|hr|hrs|hour|hours)\b/i))) {
+    due = new Date(Date.now() + +m[1] * (/^h/i.test(m[2]) ? 3600e3 : 60e3)); msg = msg.replace(m[0], "");
+  } else if ((m = msg.match(/\b(?:at\s+)?(\d{1,2})[:.](\d{2})\b/i)) && +m[1] < 24 && +m[2] < 60) {
+    const tm = /\btomorrow\b/i.test(msg);
+    due = new Date(); due.setHours(+m[1], +m[2], 0, 0);
+    if (tm || due <= new Date()) due.setDate(due.getDate() + 1);
+    msg = msg.replace(m[0], "").replace(/\btomorrow\b/i, "");
+  }
+  msg = msg.replace(/\s+/g, " ").replace(/\s+(at|in|on)$/i, "").trim();
+  if (!due || !msg) return null;
+  const t = { id: Math.random().toString(16).slice(2, 8), message: msg[0].toUpperCase() + msg.slice(1), due: isoMin(due), repeat: "none", action: null, action_input: null };
+  S.state.tasks = [...(S.state.tasks || []), t]; changed();
+  return { t, due };
 }
 function renderSpoken() {
   const b = $("#spokenBtn");
@@ -554,7 +681,7 @@ async function ask(text) {
   if (ok) {
     const ts = now();
     S.state.history = [...(S.state.history || []), { role: "user", text, ...stamp, ts, src: "phone" }, { role: "assistant", text: reply, ...stamp, ts: ts + 0.001, src: "phone" }].slice(-200);
-    changed();
+    changed(); renderTasks(); renderGlance();
     setState("idle"); say(reply);
   } else setState("error");
 }
@@ -575,12 +702,24 @@ function checkDue() {
 function openSheet(id) { $(id).hidden = false; }
 function closeSheets() { $$(".p-sheet").forEach(s => s.hidden = true); }
 
-// keep everything above the keyboard: size the app to the visible part of the screen
+// The app is exactly as tall as the screen. With the keyboard open it shrinks to the part you can see
+// and shows only the orb, the answer and the box you type in.
+let fullH = 0;
 function fitViewport() {
   const vv = window.visualViewport;
-  const h = vv ? vv.height : window.innerHeight;
-  document.documentElement.style.setProperty("--app-h", h + "px");
-  if (vv && vv.offsetTop) window.scrollTo(0, 0);
+  const h = Math.round(vv ? vv.height : window.innerHeight);
+  if (h > fullH) fullH = h;
+  const kb = h < fullH - 140;
+  document.documentElement.classList.toggle("kb", kb);
+  document.documentElement.style.setProperty("--app-h", (kb ? h : fullH) + "px");
+  if (window.scrollY || (vv && vv.offsetTop)) window.scrollTo(0, 0);
+  sizeOrb();
+}
+function sizeOrb() {
+  const box = $(".p-orbbox");
+  if (!box || !box.clientHeight) return;
+  const size = Math.max(90, Math.min(box.clientHeight - 28, box.clientWidth * 0.6, 250));
+  $("#orb").style.setProperty("--orb", Math.round(size) + "px");
 }
 
 function setTheme(t) {
@@ -633,6 +772,7 @@ async function start() {
   S.repo = conn.repo; S.token = conn.token;
   S.state = (await localOpen("state")) || { facts: [], tasks: [], skills: [], history: [], settings: {} };
   S.base = await localOpen("base");
+  S.snap = await localOpen("snap");
   showApp();
   sync();
 }
@@ -654,7 +794,7 @@ function showSetup(link) {
 
 function showApp() {
   $("#setup").hidden = true; $("#app").hidden = false;
-  renderTasks(); renderSpoken(); setState("idle");
+  renderSpoken(); setState("idle"); renderAll(); go("home"); fitViewport(); loadWeather();
   const last = [...(S.state.history || [])].reverse().find(m => m.role === "assistant");
   if (last) setCaption(last.text, "jarvis");
   $("#mInfo").textContent = `${S.repo} · PC: ${S.state.settings?.pc_name || "not seen yet"}`;
@@ -663,22 +803,25 @@ function showApp() {
 
 document.addEventListener("DOMContentLoaded", () => {
   hydrateIcons();
-  setTheme(localStorage.getItem("jarvis.theme") || "light");
+  setTheme(localStorage.getItem("jarvis.theme") || "dark");
   fitViewport();
   window.visualViewport?.addEventListener("resize", fitViewport);
   window.visualViewport?.addEventListener("scroll", fitViewport);
+  addEventListener("orientationchange", () => { fullH = 0; setTimeout(fitViewport, 350); });
+  addEventListener("scroll", () => { if (window.scrollY) window.scrollTo(0, 0); });
+  ["gesturestart", "gesturechange"].forEach(t => document.addEventListener(t, e => e.preventDefault()));   // no pinch-zoom
+  let lastTap = 0;                                                                                          // no double-tap zoom
+  document.addEventListener("touchend", e => { const t = Date.now(); if (t - lastTap < 320 && !e.target.closest("input, textarea")) e.preventDefault(); lastTap = t; }, { passive: false });
   addEventListener("pointerdown", unlockSpeech, { capture: true });
 
   const input = $("#input");
-  const grow = () => { input.style.height = "auto"; input.style.height = Math.min(120, input.scrollHeight) + "px"; };
-  input.addEventListener("input", grow);
   input.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); $("#composer").requestSubmit(); } });
-  $("#composer").onsubmit = e => { e.preventDefault(); const v = input.value; input.value = ""; grow(); input.blur(); ask(v); };
+  $("#composer").onsubmit = e => { e.preventDefault(); const v = input.value; input.value = ""; input.blur(); ask(v); };
   $("#orb").onclick = toggleListen; $("#micBtn").onclick = toggleListen;
-  $$(".suggestion[data-ask]").forEach(b => b.onclick = () => ask(b.dataset.ask));
+  $$("[data-ask]").forEach(b => b.onclick = () => ask(b.dataset.ask));
+  $$(".p-tabs [data-tab]").forEach(b => b.onclick = () => go(b.dataset.tab));
+  $$("[data-go]").forEach(b => b.onclick = () => go(b.dataset.go));
   $("#spokenBtn").onclick = () => setSpeak(!speakOn);
-  $("#histBtn").onclick = () => { renderThread(); openSheet("#histSheet"); };
-  $("#tasksBtn").onclick = () => { renderTasks(); openSheet("#tasksSheet"); };
   $("#menuBtn").onclick = () => {
     const v = bestVoice(); $("#mVoice").textContent = v ? v.name : "System voice";
     let p = null; try { p = JSON.parse(localStorage.getItem("jarvis.lastProblem") || "null"); } catch (_) {}
@@ -687,7 +830,15 @@ document.addEventListener("DOMContentLoaded", () => {
   };
   $$("[data-close]").forEach(b => b.onclick = closeSheets);
   $$(".p-sheet").forEach(s => s.onclick = e => { if (e.target === s) closeSheets(); });
-  $("#taskAdd").onsubmit = e => { e.preventDefault(); const v = $("#taskText").value.trim(); if (!v) return; $("#taskText").value = ""; closeSheets(); ask("Add a task: " + v); };
+  $("#taskAdd").onsubmit = e => {
+    e.preventDefault();
+    const box = $("#taskText"), v = box.value.trim();
+    if (!v) return;
+    box.value = ""; box.blur();
+    const q = quickTask(v);
+    if (q) { renderTasks(); renderGlance(); toast(`Added for ${q.due.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}`); }
+    else { go("home"); ask("Add a task: " + v); }
+  };
   $("#mSync").onclick = () => sync();
   $("#mSpeak").onchange = e => setSpeak(e.target.checked);
   $("#mVoiceTest").onclick = () => { const was = speakOn; speakOn = true; say("Good evening, sir. All systems are online."); speakOn = was; };
@@ -695,7 +846,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#mForget").onclick = async () => { if (!confirm("Disconnect this phone? Your data stays safe on the PC and in the encrypted sync.")) return; await kvClear(); localStorage.clear(); location.reload(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden && S.key && S.repo) sync(); });
   setInterval(() => { if (!document.hidden && S.key && S.repo) sync(); }, 60000);
-  setInterval(() => { if (S.state) checkDue(); }, 30000);
+  setInterval(() => { if (S.state) { checkDue(); renderGlance(); loadWeather(); } }, 30000);
   if ("speechSynthesis" in window) { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => {}; }
   start().catch(e => { setCaption("Jarvis couldn't start: " + e.message, "error"); });
 });

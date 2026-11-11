@@ -1,14 +1,14 @@
 <!doctype html>
-<html lang="en" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src https://api.github.com https://generativelanguage.googleapis.com https://geocoding-api.open-meteo.com https://api.open-meteo.com; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
-<meta name="theme-color" content="#F4F3F0">
+<meta name="theme-color" content="#0B0B16">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Jarvis">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -21,7 +21,7 @@
 <div class="backdrop" aria-hidden="true"><div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i></div></div>
 
 <!-- First start: connect this phone to your Jarvis -->
-<main class="p-screen p-setup" id="setup" hidden>
+<main class="p-app p-setup" id="setup" hidden>
   <div class="settings-group p-setup-card">
     <span class="brand-mark p-setup-mark" aria-hidden="true"></span>
     <h1>Connect your Jarvis</h1>
@@ -37,67 +37,97 @@
 </main>
 
 <!-- Jarvis -->
-<main class="p-screen" id="app" hidden>
+<main class="p-app" id="app" hidden>
   <header class="p-top">
     <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="wordmark">JARVIS</span></div>
     <span class="p-sync" id="syncStatus"><i class="p-sdot"></i><span>Syncing…</span></span>
-    <button class="icon-btn" id="histBtn" type="button" aria-label="History"><i data-icon="message-square"></i></button>
-    <button class="icon-btn p-badge-host" id="tasksBtn" type="button" aria-label="Tasks"><i data-icon="list-checks"></i><b class="p-badge" id="taskCount" hidden></b></button>
-    <button class="icon-btn" id="menuBtn" type="button" aria-label="Menu"><i data-icon="settings"></i></button>
+    <button class="icon-btn" id="menuBtn" type="button" aria-label="Settings"><i data-icon="settings"></i></button>
   </header>
 
-  <section class="p-stage">
-    <button class="orb" id="orb" type="button" data-mode="idle" aria-label="Talk to Jarvis">
-      <span class="orb-glow"></span>
-      <span class="orb-rings" aria-hidden="true"></span>
-      <span class="orb-breathe"><span class="orb-body"><span class="orb-tint">
-        <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
-      </span><span class="orb-sheen"></span></span></span>
-    </button>
-    <div class="state-row"><span class="state-chip" id="stateChip" role="status" aria-live="polite"></span></div>
-    <p class="context-line p-caption" id="caption">Tap the orb and talk, or type below.</p>
-  </section>
-
-  <div class="p-bottom">
-    <div class="suggestions p-sugs" role="group" aria-label="Suggestions">
-      <button class="suggestion" data-ask="Summarize my day: my tasks and the weather."><i data-icon="sparkle"></i><span>My day</span></button>
-      <button class="suggestion" data-ask="What's the weather like?"><i data-icon="cloud-sun"></i><span>Weather</span></button>
-      <button class="suggestion" data-ask="What are my tasks?"><i data-icon="list-checks"></i><span>Tasks</span></button>
-      <button class="suggestion" data-ask="Is the stock market open, and how are my watchlist stocks doing?"><i data-icon="line-chart"></i><span>Markets</span></button>
-      <button class="suggestion" data-ask="What's the latest news?"><i data-icon="globe"></i><span>News</span></button>
-    </div>
-    <form class="composer p-composer" id="composer" autocomplete="off">
-      <label for="input" class="sr-only">Message Jarvis</label>
-      <textarea id="input" rows="1" placeholder="Ask Jarvis anything…" enterkeyhint="send" autocomplete="off"></textarea>
-      <div class="composer-tools">
-        <button class="mic-btn" id="micBtn" type="button" aria-label="Talk to Jarvis"><i data-icon="mic"></i></button>
-        <button class="send-btn" id="sendBtn" type="submit" aria-label="Send"><i data-icon="arrow-up"></i></button>
+  <div class="p-pages">
+    <!-- Home -->
+    <section class="p-page p-home active" data-page="home" aria-label="Home">
+      <div class="p-glance">
+        <button class="p-tile" id="gClock" type="button" data-go="tasks">
+          <span class="p-tile-big num" id="gTime">--:--</span>
+          <span class="p-tile-sub"><b id="gDate"></b><span id="gNext">Nothing scheduled</span></span>
+        </button>
+        <button class="p-tile" id="gWeather" type="button" data-ask="What's the weather like today and tomorrow?">
+          <span class="p-tile-ico" id="gWIcon"><i data-icon="cloud-sun"></i></span>
+          <span class="p-tile-sub"><b id="gTemp">--°</b><span id="gWText">Weather</span></span>
+        </button>
       </div>
-    </form>
-    <div class="composer-foot p-foot">
-      <button class="mode-toggle" id="spokenBtn" type="button" aria-pressed="true"></button>
-      <span class="grow"></span>
-      <span class="p-pc" id="pcHint"></span>
-    </div>
+      <div class="p-stage">
+        <div class="p-orbbox">
+          <button class="orb" id="orb" type="button" data-mode="idle" aria-label="Talk to Jarvis">
+            <span class="orb-glow"></span>
+            <span class="orb-rings" aria-hidden="true"></span>
+            <span class="orb-breathe"><span class="orb-body"><span class="orb-tint">
+              <span class="blob b1"></span><span class="blob b2"></span><span class="blob b3"></span><span class="blob b4"></span>
+            </span><span class="orb-sheen"></span></span></span>
+          </button>
+        </div>
+        <div class="state-row p-state"><span class="state-chip" id="stateChip" role="status" aria-live="polite"></span></div>
+        <div class="p-capbox"><p class="p-caption" id="caption">Tap the orb and talk, or type below.</p></div>
+      </div>
+      <div class="suggestions p-sugs" role="group" aria-label="Suggestions">
+        <button class="suggestion" data-ask="Summarize my day: my tasks and the weather."><i data-icon="sparkle"></i><span>My day</span></button>
+        <button class="suggestion" data-ask="What's the weather like?"><i data-icon="cloud-sun"></i><span>Weather</span></button>
+        <button class="suggestion" data-ask="What are my tasks?"><i data-icon="list-checks"></i><span>Tasks</span></button>
+        <button class="suggestion" data-ask="Is the stock market open, and how are my watchlist stocks doing?"><i data-icon="line-chart"></i><span>Markets</span></button>
+        <button class="suggestion" data-ask="What's the latest news?"><i data-icon="globe"></i><span>News</span></button>
+      </div>
+      <form class="composer p-composer" id="composer" autocomplete="off">
+        <label for="input" class="sr-only">Message Jarvis</label>
+        <textarea id="input" rows="1" placeholder="Ask Jarvis anything…" enterkeyhint="send" autocomplete="off"></textarea>
+        <div class="composer-tools">
+          <button class="mic-btn" id="micBtn" type="button" aria-label="Talk to Jarvis"><i data-icon="mic"></i></button>
+          <button class="send-btn" id="sendBtn" type="submit" aria-label="Send"><i data-icon="arrow-up"></i></button>
+        </div>
+      </form>
+      <div class="composer-foot p-foot">
+        <button class="mode-toggle" id="spokenBtn" type="button" aria-pressed="true"></button>
+        <span class="grow"></span>
+        <span class="p-pc" id="pcHint"></span>
+      </div>
+    </section>
+
+    <!-- Tasks -->
+    <section class="p-page" data-page="tasks" aria-label="Tasks">
+      <div class="p-head"><h1>Tasks</h1><span class="p-meta" id="tasksMeta"></span></div>
+      <div class="p-scroll"><ul class="p-tasks" id="taskList"></ul></div>
+      <form class="p-task-add" id="taskAdd"><input class="input" id="taskText" placeholder="call dad at 18:00" autocomplete="off" enterkeyhint="done"><button class="btn primary" type="submit"><i data-icon="plus"></i><span>Add</span></button></form>
+    </section>
+
+    <!-- Markets -->
+    <section class="p-page" data-page="markets" aria-label="Markets">
+      <div class="p-head"><h1>Markets</h1><span class="p-meta" id="mktMeta"></span></div>
+      <p class="p-note" id="mktState"></p>
+      <div class="p-scroll" id="mktList"></div>
+    </section>
+
+    <!-- Inbox -->
+    <section class="p-page" data-page="inbox" aria-label="Inbox">
+      <div class="p-head"><h1>Inbox</h1><span class="p-meta" id="inboxMeta"></span></div>
+      <div class="p-scroll" id="inboxList"></div>
+    </section>
+
+    <!-- History -->
+    <section class="p-page" data-page="history" aria-label="History">
+      <div class="p-head"><h1>History</h1><span class="p-meta" id="histMeta"></span></div>
+      <div class="p-scroll thread p-thread" id="thread"></div>
+    </section>
   </div>
+
+  <nav class="p-tabs" aria-label="Pages">
+    <button type="button" data-tab="home" aria-current="page"><i data-icon="assistant"></i><span>Home</span></button>
+    <button type="button" data-tab="tasks"><i data-icon="list-checks"></i><span>Tasks</span><b class="p-badge" id="taskCount" hidden></b></button>
+    <button type="button" data-tab="markets"><i data-icon="line-chart"></i><span>Markets</span></button>
+    <button type="button" data-tab="inbox"><i data-icon="inbox"></i><span>Inbox</span><b class="p-badge" id="inboxCount" hidden></b></button>
+    <button type="button" data-tab="history"><i data-icon="message-square"></i><span>History</span></button>
+  </nav>
+  <div class="p-toast" id="toast" role="status" hidden></div>
 </main>
-
-<!-- History -->
-<div class="p-sheet" id="histSheet" hidden>
-  <div class="p-sheet-card">
-    <div class="p-sheet-head"><strong>History</strong><button class="icon-btn" data-close type="button" aria-label="Close"><i data-icon="x"></i></button></div>
-    <div class="thread p-thread" id="thread"></div>
-  </div>
-</div>
-
-<!-- Tasks -->
-<div class="p-sheet" id="tasksSheet" hidden>
-  <div class="p-sheet-card">
-    <div class="p-sheet-head"><strong>Tasks</strong><button class="icon-btn" data-close type="button" aria-label="Close"><i data-icon="x"></i></button></div>
-    <ul class="p-tasks" id="taskList"></ul>
-    <form class="p-task-add" id="taskAdd"><input class="input" id="taskText" placeholder="Add: call dad at 18:00" autocomplete="off"><button class="btn primary" type="submit">Add</button></form>
-  </div>
-</div>
 
 <!-- Menu -->
 <div class="p-sheet" id="menuSheet" hidden>
@@ -110,7 +140,7 @@
       <div class="setting-row"><div class="desc"><strong>Voice</strong><span id="mVoice">—</span></div><button class="btn sm" type="button" id="mVoiceTest">Test</button></div>
       <div class="setting-row"><div class="desc"><strong>Sync</strong><span id="mInfo"></span></div><button class="btn sm" type="button" id="mSync">Sync now</button></div>
       <div class="setting-row"><div class="desc"><strong>Last problem</strong><span id="mProblem" class="p-problem">None</span></div></div>
-      <p class="secondary p-small">Your conversations, profile and tasks are encrypted with your passphrase before they leave this phone. Better voice: iPhone Settings › Accessibility › Spoken Content › Voices › English › download "Daniel (Enhanced)".</p>
+      <p class="secondary p-small">Your conversations, profile, tasks, and the prices and email previews your PC sends here are all encrypted with your passphrase. Better voice: iPhone Settings › Accessibility › Spoken Content › Voices › English › download "Daniel (Enhanced)".</p>
       <button class="btn ghost danger p-wide" type="button" id="mForget">Disconnect this phone</button>
     </div>
   </div>

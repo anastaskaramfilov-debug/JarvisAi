@@ -5294,8 +5294,34 @@ def _phone_chat(text: str) -> dict:
     return chat(text, emit=None, voice=False, keep=True)
 
 
+def _sync_snapshot() -> dict:
+    """What the phone's Markets and Inbox pages show (the phone can't reach Yahoo or Gmail by itself)."""
+    from concurrent.futures import ThreadPoolExecutor
+    tickers = CONFIG.get("watchlist", [])[:8]
+    quotes = []
+    if tickers:
+        with ThreadPoolExecutor(max_workers=len(tickers)) as ex:
+            for tk, q in zip(tickers, ex.map(stock_price, tickers)):
+                q = dict(q, ticker=q.get("ticker") or tk)
+                sp = [x for x in (q.get("spark") or []) if isinstance(x, (int, float))]
+                step = max(1, len(sp) // 40)
+                quotes.append({"ticker": q.get("ticker"), "exchange": q.get("exchange"), "price": q.get("price"),
+                               "previous_close": q.get("previous_close"), "change_percent": q.get("change_percent"),
+                               "currency": q.get("currency"), "spark": sp[::step], "error": bool(q.get("error"))})
+    if not CONFIG.get("email_app_password"):
+        inbox = {"setup": True}
+    else:
+        m = check_email(limit=10, unread_only=True)
+        inbox = {"error": True} if "error" in m else {
+            "unread": m.get("unread", 0),
+            "emails": [{"from": str(e.get("from", ""))[:80], "subject": str(e.get("subject", ""))[:140],
+                        "preview": " ".join(str(e.get("preview", "")).split())[:260], "when": e.get("when", "")}
+                       for e in (m.get("emails") or [])]}
+    return {"v": 1, "at": datetime.datetime.now().strftime("%a %H:%M"), "quotes": quotes, "inbox": inbox}
+
+
 JS.start(log=log_error, data_dir=DATA, config=lambda: CONFIG, save_config=lambda: save_config(CONFIG),
-         get_local=_sync_local, apply=_sync_apply, chat=_phone_chat)
+         get_local=_sync_local, apply=_sync_apply, chat=_phone_chat, snapshot=_sync_snapshot)
 
 
 def _phone_app_url() -> str:

@@ -186,6 +186,8 @@ def sync_now(reason=""):
         try:
             for attempt in range(4):
                 remote, sha, salt, _ = read_file("state.enc")
+                if salt:
+                    _snap["salt"] = salt                   # the phone's key is made with this salt
                 base = _load_base()
                 local = CTX["get_local"]()
                 merged = merge_state(base, local, remote)
@@ -196,6 +198,8 @@ def sync_now(reason=""):
                     except ConflictError:
                         time.sleep(0.6)
                         continue
+                    if not salt:
+                        _snap["salt"] = None               # first copy just made: learn its salt next round
                 _save_base(merged)
                 break
             STATUS.update(state="ok", last=time.time(), error=None)
@@ -228,9 +232,43 @@ def sync_loop():
                     sync_now()
                     last_full = time.time()
                 check_mailbox()
+                push_snapshot()
         except Exception as e:
             log(f"Sync loop: {e}")
         time.sleep(6)
+
+
+# ---------------------------------------------------------------- what the phone shows on its Markets and Inbox pages
+_snap = {"t": 0, "sig": None, "sha": None, "known": False, "salt": None}
+
+
+def push_snapshot(force=False):
+    """Every 10 minutes: the watchlist quotes and the newest unread emails, encrypted like everything else.
+    Written only when something changed, so a quiet PC makes no commits."""
+    if "snapshot" not in CTX or (not force and time.time() - _snap["t"] < 600):
+        return
+    try:
+        if not _snap["salt"]:                              # must be the same salt as state.enc, or the phone can't open it
+            _snap["salt"] = read_file("state.enc")[2]
+        if not _snap["salt"]:
+            return
+        _snap["t"] = time.time()
+        body = CTX["snapshot"]()
+        sig = hashlib.sha1(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        if sig == _snap["sig"]:
+            return
+        for attempt in range(3):
+            if not _snap["known"]:
+                _, _snap["sha"], _, _ = read_file("snapshot.enc")
+                _snap["known"] = True
+            try:
+                _snap["sha"] = write_file("snapshot.enc", dict(body, t=time.time()), _snap["sha"], _snap["salt"])
+                _snap["sig"] = sig
+                return
+            except ConflictError:
+                _snap["known"] = False
+    except Exception as e:
+        log(f"Sync snapshot: {e}")
 
 
 # ---------------------------------------------------------------- the phone's requests to the PC
